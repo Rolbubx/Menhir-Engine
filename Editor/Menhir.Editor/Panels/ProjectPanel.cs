@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Numerics;
 using ImGuiNET;
 using Menhir.Editor.Assets;
+using Menhir.Editor.Logging;
 using Menhir.Editor.Projects;
 
 namespace Menhir.Editor.Panels;
@@ -457,7 +458,7 @@ public sealed class ProjectPanel : EditorPanel
                                       or InvalidOperationException)
         {
             _error = e.Message;
-            Console.Error.WriteLine($"Project: {e.Message}");
+            Log.Error(e.Message);
             _context.RefreshAssets();
         }
     }
@@ -485,6 +486,7 @@ public sealed class ProjectPanel : EditorPanel
         catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
             _error = $"Could not open the file browser: {e.Message}";
+            Log.Error(_error);
         }
     }
 }

@@ -117,6 +117,18 @@ A component whose type no longer exists is kept as is and saved back unchanged.
   outside the editor, move the `.meta` along with its file
 - Ignored: hidden files (`.name`), backups (`name~`) and `*.tmp`
 
+### Console
+
+- Editor messages (scenes opened and saved, asset refresh, warnings while loading a scene, errors),
+  also written to stdout / stderr
+- Toggle info, warnings and errors with the counters on the right; **Search** filters by text;
+  **Collapse** shows repeated messages once with a count
+- Select a message to see all of it below the list (drag the line in between to resize);
+  **Copy** in the details, right-click, or Ctrl+C copies it
+- Keeps the last 5000 messages; the filters are saved with the editor preferences
+
+Editor code logs with `Log.Info`, `Log.Warning` and `Log.Error` (`Menhir.Editor.Logging`, safe from any thread).
+
 World conventions: right-handed, Y up, 1 unit = 1 meter.
 
 The editor font is [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), distributed under the

@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using ImGuiNET;
+using Menhir.Editor.Logging;
 using Silk.NET.OpenGL.Extensions.ImGui;
 
 namespace Menhir.Editor.UI;
@@ -28,7 +29,7 @@ public static class EditorFonts
     {
         if (!File.Exists(FontPath))
         {
-            Console.Error.WriteLine($"Editor font not found at {FontPath}, using the ImGui default font.");
+            Log.Warning($"Editor font not found at {FontPath}, using the ImGui default font.");
             return null;
         }
         return new ImGuiFontConfig(FontPath, FontSize, _ => GlyphRanges.Value);

@@ -1,5 +1,6 @@
 using Menhir.Editor.Assets;
 using Menhir.Editor.Commands;
+using Menhir.Editor.Logging;
 using Menhir.Editor.Projects;
 using Menhir.Editor.Scenes;
 using Menhir.Editor.Serialization;
@@ -115,18 +116,18 @@ public sealed class EditorContext
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or SceneFormatException)
         {
-            Console.Error.WriteLine($"Could not open {asset.Path}: {e.Message}");
+            Log.Error($"Could not open {asset.Path}: {e.Message}");
             return false;
         }
 
         foreach (string warning in warnings)
-            Console.WriteLine($"Warning: {asset.Path}: {warning}");
+            Log.Warning($"{asset.Path}: {warning}");
         scene.Name = Path.GetFileNameWithoutExtension(asset.Name);
         ActiveScene = scene;
         ActiveSceneGuid = asset.Guid;
         History.Clear();
         RememberActiveScene();
-        Console.WriteLine($"Opened scene {asset.Path}");
+        Log.Info($"Opened scene {asset.Path}");
         return true;
     }
 
@@ -136,7 +137,7 @@ public sealed class EditorContext
         string assetPath = ActiveScenePath ?? throw new InvalidOperationException("The scene has no file yet.");
         File.WriteAllText(Project!.Assets.ToAbsolutePath(assetPath), SceneSerializer.Serialize(ActiveScene));
         History.MarkSaved();
-        Console.WriteLine($"Saved scene {assetPath}");
+        Log.Info($"Saved scene {assetPath}");
     }
 
     /// <summary>Saves the active scene to a new file <paramref name="folder"/>/<paramref name="name"/>.scene.</summary>
@@ -162,7 +163,7 @@ public sealed class EditorContext
         ActiveSceneGuid = assets.FindByPath(assetPath)?.Guid;
         History.MarkSaved();
         RememberActiveScene();
-        Console.WriteLine($"Saved scene {assetPath}");
+        Log.Info($"Saved scene {assetPath}");
     }
 
     /// <summary>Rescans Assets/ and logs what changed on disk.</summary>
@@ -173,13 +174,13 @@ public sealed class EditorContext
 
         AssetRefreshResult result = Project.Assets.Refresh();
         foreach (string path in result.CreatedMetas)
-            Console.WriteLine($"Created meta for {path}");
+            Log.Info($"Created meta for {path}");
         foreach (string path in result.RemovedMetas)
-            Console.WriteLine($"Removed orphan {path}");
+            Log.Info($"Removed orphan {path}");
         foreach (string path in result.RepairedMetas)
-            Console.WriteLine($"Warning: gave {path} a new GUID (its .meta was unreadable or a duplicate)");
+            Log.Warning($"Gave {path} a new GUID (its .meta was unreadable or a duplicate)");
         foreach (string error in result.Errors)
-            Console.Error.WriteLine($"Asset refresh error: {error}");
+            Log.Error($"Asset refresh: {error}");
     }
 
     private void RememberActiveScene()

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Menhir.Editor.Logging;
 
 namespace Menhir.Editor;
 
@@ -16,6 +17,9 @@ public sealed class EditorPreferences
 
     /// <summary>Panel title → is the panel open.</summary>
     public Dictionary<string, bool> OpenPanels { get; set; } = new();
+
+    /// <summary>Console panel toggles (levels shown, collapse).</summary>
+    public LogFilter ConsoleFilter { get; set; } = new();
 
     /// <summary>Root folders of recently opened projects, most recent first.</summary>
     public List<string> RecentProjects { get; set; } = new();
@@ -39,7 +43,7 @@ public sealed class EditorPreferences
         }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine($"Could not read editor preferences, using defaults: {e.Message}");
+            Log.Warning($"Could not read editor preferences, using defaults: {e.Message}");
         }
         return new();
     }
@@ -52,7 +56,7 @@ public sealed class EditorPreferences
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine($"Could not save editor preferences: {e.Message}");
+            Log.Error($"Could not save editor preferences: {e.Message}");
         }
     }
 }

@@ -6,6 +6,7 @@ using Menhir.Editor.Rendering;
 using Menhir.Editor.Rendering.OpenGL;
 using Menhir.Editor.Assets;
 using Menhir.Editor.Commands;
+using Menhir.Editor.Logging;
 using Menhir.Editor.UI;
 using Menhir.Editor.UI.Dialogs;
 using Silk.NET.Input;
@@ -86,7 +87,7 @@ public sealed class EditorApplication : IDisposable
         string? path = ProjectLocator.Find(args, _preferences.RecentProjects);
         if (path == null)
         {
-            Console.WriteLine("No project found; use File > Open Project or start with --project <folder>.");
+            Log.Warning("No project found; use File > Open Project or start with --project <folder>.");
             return;
         }
         try
@@ -95,16 +96,16 @@ public sealed class EditorApplication : IDisposable
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine($"Could not open project '{path}': {e.Message}");
+            Log.Error($"Could not open project '{path}': {e.Message}");
         }
     }
 
     private void OpenProject(Project project)
     {
+        Log.Info($"Opened project {project.RootPath}");
         _context.OpenProject(project);
         _preferences.AddRecentProject(project.RootPath);
         _preferences.Save(EditorPaths.PreferencesFile);
-        Console.WriteLine($"Opened project {project.RootPath}");
     }
 
     private string BuildTitle()
@@ -143,7 +144,7 @@ public sealed class EditorApplication : IDisposable
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine($"Could not save the scene: {e.Message}");
+            Log.Error($"Could not save the scene: {e.Message}");
         }
     }
 
@@ -164,7 +165,7 @@ public sealed class EditorApplication : IDisposable
         _imgui = new ImGuiController(_gl, _window, _input, EditorFonts.CreateConfig(), ConfigureImGui);
         ImGuiModifierKeys.Attach(_input);
 
-        Console.WriteLine($"OpenGL {_gl.GetStringS(StringName.Version)} — {_gl.GetStringS(StringName.Renderer)}");
+        Log.Info($"OpenGL {_gl.GetStringS(StringName.Version)} — {_gl.GetStringS(StringName.Renderer)}");
 
         _renderer = new GLRenderer(_gl);
         _panels =
@@ -173,7 +174,7 @@ public sealed class EditorApplication : IDisposable
             new HierarchyPanel(_context),
             new InspectorPanel(_context),
             new ProjectPanel(_context, OpenSceneAsset),
-            new ConsolePanel(),
+            new ConsolePanel(Log.Messages, _preferences.ConsoleFilter),
         ];
         foreach (EditorPanel panel in _panels)
         {

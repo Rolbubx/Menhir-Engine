@@ -1,5 +1,6 @@
 using System.Numerics;
 using ImGuiNET;
+using Menhir.Editor.Assets;
 using Menhir.Editor.Inspector;
 using Menhir.Editor.Inspection;
 using Menhir.Editor.Mathematics;
@@ -8,8 +9,8 @@ using Menhir.Editor.Scenes;
 namespace Menhir.Editor.Panels;
 
 /// <summary>
-/// Properties of the selected entity: name, Transform, then each component drawn by
-/// reflection (<see cref="ComponentDrawer"/>).
+/// Properties of the selection. For an entity: name, Transform, then each component drawn
+/// by reflection (<see cref="ComponentDrawer"/>). For an asset: its path and .meta content.
 /// </summary>
 public sealed class InspectorPanel : EditorPanel
 {
@@ -35,6 +36,8 @@ public sealed class InspectorPanel : EditorPanel
     {
         if (_context.SelectedEntity is { } entity)
             DrawEntity(entity);
+        else if (_context.SelectedAsset is { } asset)
+            DrawAsset(asset);
         else
             Placeholder("Nothing selected.");
     }
@@ -60,6 +63,38 @@ public sealed class InspectorPanel : EditorPanel
         }
 
         ImGui.PopID();
+    }
+
+    private static void DrawAsset(AssetEntry asset)
+    {
+        ImGui.TextUnformatted(asset.Name);
+        ImGui.SameLine();
+        ImGui.TextDisabled(asset.IsFolder ? "Folder" : asset.Meta.Importer);
+        ImGui.Spacing();
+
+        if (ImGui.CollapsingHeader("Asset", ImGuiTreeNodeFlags.DefaultOpen) && PropertyTable.Begin("##asset"))
+        {
+            PropertyTable.Row("Path");
+            ReadOnlyField("##path", asset.Path);
+            PropertyTable.Row("GUID");
+            ReadOnlyField("##guid", asset.Guid.ToString("N"));
+            PropertyTable.Row("Importer");
+            ImGui.TextUnformatted(asset.Meta.Importer);
+            PropertyTable.End();
+        }
+
+        if (!asset.IsFolder && ImGui.CollapsingHeader("Import Settings", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            if (asset.Meta.Settings.Count > 0)
+                ImGui.TextUnformatted(asset.Meta.Settings.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            Placeholder("Import settings become editable once asset importing exists.");
+        }
+    }
+
+    /// <summary>Text the user can select and copy, but not edit.</summary>
+    private static void ReadOnlyField(string id, string text)
+    {
+        ImGui.InputText(id, ref text, (uint)text.Length + 1, ImGuiInputTextFlags.ReadOnly);
     }
 
     /// <summary>Edited in a buffer and applied when the field loses focus, so an empty name never shows up.</summary>

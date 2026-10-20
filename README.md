@@ -18,6 +18,12 @@ Requires the .NET 10 SDK.
 dotnet run --project Editor/Menhir.Editor
 ```
 
+This opens the `Samples/Sandbox` project. To open another project folder (it must contain `Assets/`):
+
+```sh
+dotnet run --project Editor/Menhir.Editor -- --project path/to/MyGame
+```
+
 The window layout and editor preferences are stored per user, outside the repo:
 `%APPDATA%/Menhir/Editor` on Windows, `~/.config/Menhir/Editor` on Linux.
 Use **Window → Reset Layout** to restore the default layout.
@@ -48,6 +54,18 @@ Run the unit tests with `dotnet test`.
 - Drag a number to change it, or Ctrl+click / double-click it to type a value
 - Components are drawn by reflection: every public property with a public getter and setter is shown,
   unless marked `[HideInInspector]`; a `Vector4` marked `[Color]` gets a color picker
+
+### Project
+
+- Folder tree on the left, content of the current folder on the right; double-click a folder to open it
+- Every file and folder in `Assets/` gets a `.meta` file holding its GUID and import settings.
+  Commit them with the assets: references use the GUID, so an asset keeps its identity when renamed or moved
+- Missing `.meta` files are created, orphan ones are deleted and copied ones get a new GUID when
+  the project opens, when the editor window gets the focus back, or on **Refresh**
+- **+** or right-click to create a folder; **F2** to rename, **Del** to delete (asks first, cannot be undone),
+  drag onto a folder (in either pane or in the path bar) to move. Do these in the editor so the `.meta` follows;
+  outside the editor, move the `.meta` along with its file
+- Ignored: hidden files (`.name`), backups (`name~`) and `*.tmp`
 
 World conventions: right-handed, Y up, 1 unit = 1 meter.
 

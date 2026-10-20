@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using ImGuiNET;
 using Menhir.Editor.Panels;
+using Menhir.Editor.Projects;
 using Menhir.Editor.Rendering;
 using Menhir.Editor.Rendering.OpenGL;
 using Menhir.Editor.UI;
@@ -35,17 +36,18 @@ public sealed class EditorApplication : IDisposable
     // ImGui keeps a raw pointer to the ini path, so it must outlive the ImGui context.
     private IntPtr _layoutFilePath;
 
-    public EditorApplication()
+    public EditorApplication(string[] args)
     {
         EditorPaths.EnsureConfigDirectory();
         _preferences = EditorPreferences.Load(EditorPaths.PreferencesFile);
+        OpenStartupProject(args);
 
         // No saved layout yet: build the default one on the first frame.
         _dockspace = new EditorDockspace(buildDefaultLayout: !File.Exists(EditorPaths.LayoutFile));
 
         WindowOptions options = WindowOptions.Default with
         {
-            Title = "Menhir Editor",
+            Title = _context.Project is { } project ? $"Menhir Editor — {project.Name}" : "Menhir Editor",
             Size = new Vector2D<int>(_preferences.WindowWidth, _preferences.WindowHeight),
             WindowState = _preferences.WindowMaximized ? WindowState.Maximized : WindowState.Normal,
             API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible,
@@ -57,6 +59,31 @@ public sealed class EditorApplication : IDisposable
         _window.Render += OnRender;
         _window.FramebufferResize += size => _gl?.Viewport(size);
         _window.Closing += OnClosing;
+        // Pick up files added, changed or removed outside the editor, like Unity does.
+        _window.FocusChanged += focused =>
+        {
+            if (focused)
+                _context.RefreshAssets();
+        };
+    }
+
+    private void OpenStartupProject(string[] args)
+    {
+        string? path = ProjectLocator.Find(args);
+        if (path == null)
+        {
+            Console.WriteLine("No project found; start the editor with --project <folder>.");
+            return;
+        }
+        try
+        {
+            _context.OpenProject(Project.Open(path));
+            Console.WriteLine($"Opened project {_context.Project!.RootPath}");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Could not open project '{path}': {e.Message}");
+        }
     }
 
     public void Run() => _window.Run();
@@ -75,7 +102,7 @@ public sealed class EditorApplication : IDisposable
             new ViewportPanel(_context, _renderer, SetCursorCaptured),
             new HierarchyPanel(_context),
             new InspectorPanel(_context),
-            new ProjectPanel(),
+            new ProjectPanel(_context),
             new ConsolePanel(),
         ];
         foreach (EditorPanel panel in _panels)

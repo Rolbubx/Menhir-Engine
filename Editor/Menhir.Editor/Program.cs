@@ -1,4 +1,4 @@
 using Menhir.Editor;
 
-using var app = new EditorApplication();
+using var app = new EditorApplication(args);
 app.Run();

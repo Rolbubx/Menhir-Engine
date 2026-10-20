@@ -43,7 +43,7 @@ public sealed class HierarchyPanel : EditorPanel
             ImGui.EndPopup();
         }
         ImGui.SameLine();
-        ImGui.TextDisabled(Scene.Name);
+        ImGui.TextDisabled(_context.IsSceneDirty ? Scene.Name + "*" : Scene.Name);
         ImGui.Separator();
 
         foreach (Entity root in Scene.GetChildren(0))
@@ -118,7 +118,11 @@ public sealed class HierarchyPanel : EditorPanel
             if (Scene.Find(draggedId) is { } dragged && dragged.ParentId != newParentId &&
                 Scene.CanReparent(dragged, newParentId))
             {
-                _pendingChange = () => Scene.SetParent(dragged, newParentId);
+                _pendingChange = () =>
+                {
+                    Scene.SetParent(dragged, newParentId);
+                    _context.MarkSceneDirty();
+                };
             }
         }
         ImGui.EndDragDropTarget();
@@ -214,8 +218,11 @@ public sealed class HierarchyPanel : EditorPanel
         else if (submitted || ImGui.IsItemDeactivated())
         {
             string name = _renameBuffer.Trim();
-            if (name.Length > 0)
+            if (name.Length > 0 && name != entity.Name)
+            {
                 entity.Name = name;
+                _context.MarkSceneDirty();
+            }
             _renamingId = 0;
         }
     }
@@ -226,11 +233,13 @@ public sealed class HierarchyPanel : EditorPanel
         if (withCube)
             entity.Components.Add(new MeshRenderer());
         _context.SelectedEntityId = entity.LocalId;
+        _context.MarkSceneDirty();
     }
 
     private void Delete(Entity entity)
     {
         Scene.DestroyEntity(entity);
+        _context.MarkSceneDirty();
         if (_context.SelectedEntity == null)
             _context.SelectedEntityId = 0;
         if (Scene.Find(_renamingId) == null)

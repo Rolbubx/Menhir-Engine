@@ -13,22 +13,28 @@ namespace Menhir.Editor.Inspector;
 /// </summary>
 public static class ComponentDrawer
 {
-    public static void Draw(Component component)
+    /// <summary>Draws the component's properties. Returns true when one was edited.</summary>
+    public static bool Draw(Component component)
     {
         if (!PropertyTable.Begin("##properties"))
-            return;
+            return false;
 
+        bool changed = false;
         foreach (PropertyInfo property in InspectableProperties.Get(component.GetType()))
         {
             PropertyTable.Row(InspectableProperties.NicifyName(property.Name));
             ImGui.PushID(property.Name);
             object? value = property.GetValue(component);
             if (DrawValue(property, value, out object? newValue))
+            {
                 SetValue(component, property, newValue);
+                changed = true;
+            }
             ImGui.PopID();
         }
 
         PropertyTable.End();
+        return changed;
     }
 
     // Single place where inspector edits reach a component (undo commands go here in Phase 7).

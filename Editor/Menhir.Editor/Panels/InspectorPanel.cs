@@ -57,8 +57,15 @@ public sealed class InspectorPanel : EditorPanel
             Component component = entity.Components[i];
             string title = InspectableProperties.NicifyName(component.GetType().Name);
             ImGui.PushID(i);
-            if (ImGui.CollapsingHeader(title, ImGuiTreeNodeFlags.DefaultOpen))
-                ComponentDrawer.Draw(component);
+            if (component is MissingComponent missing)
+            {
+                if (ImGui.CollapsingHeader($"Missing: {missing.TypeName}", ImGuiTreeNodeFlags.DefaultOpen))
+                    Placeholder($"The component type '{missing.TypeName}' was not found. Its data is kept and saved back unchanged.");
+            }
+            else if (ImGui.CollapsingHeader(title, ImGuiTreeNodeFlags.DefaultOpen) && ComponentDrawer.Draw(component))
+            {
+                _context.MarkSceneDirty();
+            }
             ImGui.PopID();
         }
 
@@ -110,8 +117,11 @@ public sealed class InspectorPanel : EditorPanel
         if (ImGui.IsItemDeactivatedAfterEdit())
         {
             string name = _nameBuffer.Trim();
-            if (name.Length > 0)
+            if (name.Length > 0 && name != entity.Name)
+            {
                 entity.Name = name;
+                _context.MarkSceneDirty();
+            }
         }
 
         ImGui.SameLine();
@@ -131,7 +141,10 @@ public sealed class InspectorPanel : EditorPanel
         Vector3 position = transform.Position;
         PropertyTable.Row("Position");
         if (ImGui.DragFloat3("##position", ref position, 0.05f, 0, 0, "%.3f"))
+        {
             transform.Position = position;
+            _context.MarkSceneDirty();
+        }
 
         if (entity.LocalId != _eulerEntityId || transform.Rotation != _eulerSource)
         {
@@ -146,12 +159,16 @@ public sealed class InspectorPanel : EditorPanel
             transform.Rotation = EulerAngles.ToQuaternion(euler);
             _eulerSource = transform.Rotation;
             _euler = euler;
+            _context.MarkSceneDirty();
         }
 
         Vector3 scale = transform.Scale;
         PropertyTable.Row("Scale");
         if (ImGui.DragFloat3("##scale", ref scale, 0.01f, 0, 0, "%.3f"))
+        {
             transform.Scale = scale;
+            _context.MarkSceneDirty();
+        }
 
         PropertyTable.End();
     }

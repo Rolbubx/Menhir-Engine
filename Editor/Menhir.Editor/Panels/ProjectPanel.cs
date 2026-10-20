@@ -18,6 +18,7 @@ public sealed class ProjectPanel : EditorPanel
     private const string DeletePopup = "Delete Asset?";
 
     private readonly EditorContext _context;
+    private readonly Action<AssetEntry> _openScene;
 
     private string _currentFolder = AssetPaths.Root;
     private bool _revealCurrentFolder;
@@ -36,9 +37,10 @@ public sealed class ProjectPanel : EditorPanel
 
     private string? _error;
 
-    public ProjectPanel(EditorContext context)
+    public ProjectPanel(EditorContext context, Action<AssetEntry> openScene)
     {
         _context = context;
+        _openScene = openScene;
     }
 
     public override string Title => "Project";
@@ -221,8 +223,8 @@ public sealed class ProjectPanel : EditorPanel
                     ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowDoubleClick))
             {
                 _context.SelectedAssetGuid = entry.Guid;
-                if (entry.IsFolder && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
-                    _pendingChange = () => Navigate(entry.Path);
+                if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                    Activate(entry);
             }
             DrawDragSource(entry);
             if (entry.IsFolder)
@@ -262,8 +264,8 @@ public sealed class ProjectPanel : EditorPanel
 
     private void DrawEntryMenuItems(AssetEntry entry)
     {
-        if (entry.IsFolder && ImGui.MenuItem("Open"))
-            _pendingChange = () => Navigate(entry.Path);
+        if ((entry.IsFolder || IsScene(entry)) && ImGui.MenuItem("Open"))
+            Activate(entry);
         if (ImGui.MenuItem("Rename", "F2"))
             BeginRename(entry);
         if (ImGui.MenuItem("Delete", "Del"))
@@ -328,8 +330,8 @@ public sealed class ProjectPanel : EditorPanel
             _deletePath = selected.Path;
         else if (ImGui.IsKeyPressed(ImGuiKey.F2))
             BeginRename(selected);
-        else if (selected.IsFolder && ImGui.IsKeyPressed(ImGuiKey.Enter))
-            Navigate(selected.Path);
+        else if (ImGui.IsKeyPressed(ImGuiKey.Enter))
+            Activate(selected);
     }
 
     private unsafe void DrawDragSource(AssetEntry entry)
@@ -425,6 +427,17 @@ public sealed class ProjectPanel : EditorPanel
         }
         ImGui.EndPopup();
     }
+
+    /// <summary>Double-click: opens a folder or a scene.</summary>
+    private void Activate(AssetEntry entry)
+    {
+        if (entry.IsFolder)
+            _pendingChange = () => Navigate(entry.Path);
+        else if (IsScene(entry))
+            _pendingChange = () => _openScene(entry);
+    }
+
+    private static bool IsScene(AssetEntry entry) => entry.Meta.Importer == AssetImporters.Scene;
 
     private void Navigate(string folderPath)
     {

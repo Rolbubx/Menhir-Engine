@@ -8,4 +8,4 @@ Sample Menhir projects used to test the editor. A project is a folder with:
 
 | Project    | What                                                                   |
 |------------|------------------------------------------------------------------------|
-| `Sandbox/` | A few placeholder assets; opened by default when the editor is run from this repository |
+| `Sandbox/` | A demo scene and a few placeholder assets; opened by default the first time the editor is run from this repository |

@@ -18,7 +18,9 @@ Requires the .NET 10 SDK.
 dotnet run --project Editor/Menhir.Editor
 ```
 
-This opens the `Samples/Sandbox` project. To open another project folder (it must contain `Assets/`):
+The first time, this opens the `Samples/Sandbox` project; afterwards the editor reopens the last
+project (and its last scene). Use **File → New Project / Open Project / Open Recent** to switch,
+or pass a project folder (one that contains `Assets/`):
 
 ```sh
 dotnet run --project Editor/Menhir.Editor -- --project path/to/MyGame
@@ -29,6 +31,47 @@ The window layout and editor preferences are stored per user, outside the repo:
 Use **Window → Reset Layout** to restore the default layout.
 
 Run the unit tests with `dotnet test`.
+
+### Projects and scenes
+
+A project is a folder with `Assets/` (committed, with the `.meta` files), `ProjectSettings/`
+(committed) and `Cache/` (git-ignored; e.g. which scene to reopen). **New Project** creates that
+layout plus an empty `Assets/Scenes/Main.scene` and a `.gitignore`.
+
+| Shortcut       | Action                                    |
+|----------------|-------------------------------------------|
+| Ctrl+N         | New scene                                 |
+| Ctrl+S         | Save scene (asks for a name the first time) |
+| Ctrl+Shift+S   | Save scene as                             |
+
+Open a scene from **File → Open Scene** or by double-clicking it in the Project panel. The editor
+asks before discarding unsaved changes (also when closing the window).
+
+Scenes are JSON files listing the entities in order, each with its local ID, parent ID, name,
+Transform and components (saved by reflection from their public read/write properties).
+A component whose type no longer exists is kept as is and saved back unchanged.
+
+```json
+{
+  "version": 1,
+  "nextLocalId": 2,
+  "entities": [
+    {
+      "id": 1,
+      "parent": 0,
+      "name": "Cube",
+      "transform": {
+        "position": [0, 0.5, 0],
+        "rotation": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "components": [
+        { "type": "MeshRenderer", "mesh": "Cube", "color": [0.5, 0.5, 0.5, 1] }
+      ]
+    }
+  ]
+}
+```
 
 ### Viewport controls
 

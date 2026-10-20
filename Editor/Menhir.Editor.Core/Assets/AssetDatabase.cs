@@ -32,6 +32,8 @@ public sealed class AssetDatabase
 
     public AssetEntry? FindByGuid(Guid guid) => _byGuid.GetValueOrDefault(guid);
 
+    public IEnumerable<AssetEntry> GetAllEntries() => _byPath.Values;
+
     public bool IsFolder(string assetPath) =>
         assetPath == AssetPaths.Root || FindByPath(assetPath)?.IsFolder == true;
 

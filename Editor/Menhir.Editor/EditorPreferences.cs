@@ -3,8 +3,8 @@ using System.Text.Json;
 namespace Menhir.Editor;
 
 /// <summary>
-/// Editor state that ImGui's ini file does not cover: main window size and
-/// which panels are open.
+/// Editor state that ImGui's ini file does not cover: main window size,
+/// which panels are open and the recently opened projects.
 /// </summary>
 public sealed class EditorPreferences
 {
@@ -16,6 +16,19 @@ public sealed class EditorPreferences
 
     /// <summary>Panel title → is the panel open.</summary>
     public Dictionary<string, bool> OpenPanels { get; set; } = new();
+
+    /// <summary>Root folders of recently opened projects, most recent first.</summary>
+    public List<string> RecentProjects { get; set; } = new();
+
+    private const int MaxRecentProjects = 10;
+
+    public void AddRecentProject(string path)
+    {
+        RecentProjects.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+        RecentProjects.Insert(0, path);
+        if (RecentProjects.Count > MaxRecentProjects)
+            RecentProjects.RemoveRange(MaxRecentProjects, RecentProjects.Count - MaxRecentProjects);
+    }
 
     public static EditorPreferences Load(string path)
     {

@@ -1,10 +1,11 @@
 using System.Reflection;
+using Menhir.Editor.Scenes;
 
 namespace Menhir.Editor.Inspection;
 
 /// <summary>
-/// Finds the properties the inspector shows for a component type: public instance
-/// properties with a public getter and setter, not marked [HideInInspector],
+/// Finds the properties the inspector shows for a component type: the saved properties
+/// (<see cref="ComponentTypes.GetSerializedProperties"/>) not marked [HideInInspector],
 /// in declaration order.
 /// </summary>
 public static class InspectableProperties
@@ -13,17 +14,17 @@ public static class InspectableProperties
 
     public static IReadOnlyList<PropertyInfo> Get(Type type)
     {
-        if (Cache.TryGetValue(type, out IReadOnlyList<PropertyInfo>? properties))
+        lock (Cache)
+        {
+            if (!Cache.TryGetValue(type, out IReadOnlyList<PropertyInfo>? properties))
+            {
+                properties = ComponentTypes.GetSerializedProperties(type)
+                    .Where(p => p.GetCustomAttribute<HideInInspectorAttribute>() == null)
+                    .ToList();
+                Cache[type] = properties;
+            }
             return properties;
-
-        properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.GetMethod?.IsPublic == true && p.SetMethod?.IsPublic == true)
-            .Where(p => p.GetIndexParameters().Length == 0)
-            .Where(p => p.GetCustomAttribute<HideInInspectorAttribute>() == null)
-            .OrderBy(p => p.MetadataToken) // declaration order within a type
-            .ToList();
-        Cache[type] = properties;
-        return properties;
+        }
     }
 
     /// <summary>"MeshRenderer" → "Mesh Renderer", "castShadows" → "Cast Shadows".</summary>

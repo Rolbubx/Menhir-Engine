@@ -162,4 +162,49 @@ public class SceneTests
             Assert.True(MathF.Abs(expected[row, column] - actual[row, column]) < Tolerance,
                 $"Matrices differ at [{row},{column}]: expected {expected}, got {actual}");
     }
+
+    [Fact]
+    public void RestoreEntities_PutsDeletedEntitiesBackAtTheirIndices()
+    {
+        var scene = new Scene();
+        Entity a = scene.CreateEntity("A");
+        Entity parent = scene.CreateEntity("Parent");
+        Entity child = scene.CreateEntity("Child", parent.LocalId);
+        Entity b = scene.CreateEntity("B");
+        scene.SetParent(parent, a.LocalId); // list: A, Child, B, Parent
+        var before = scene.Entities.ToList();
+        var removed = scene.GetSubtree(parent).Select(e => (scene.IndexOf(e), e)).ToList();
+
+        scene.DestroyEntity(parent);
+        scene.RestoreEntities(removed);
+
+        Assert.Equal(before, scene.Entities);
+        Assert.Equal([a, child, b, parent], scene.Entities);
+    }
+
+    [Fact]
+    public void RestoreEntities_RejectsDuplicateIdsAndMissingParents()
+    {
+        var scene = new Scene();
+        Entity a = scene.CreateEntity("A");
+
+        Assert.Throws<InvalidOperationException>(() => scene.RestoreEntities([(0, a)]));
+        Assert.Throws<InvalidOperationException>(() =>
+            scene.RestoreEntities([(0, new Entity { LocalId = 5, ParentId = 77 })]));
+    }
+
+    [Fact]
+    public void FromEntities_FixesCyclesAndMissingParents()
+    {
+        var a = new Entity { LocalId = 1, ParentId = 2 };
+        var b = new Entity { LocalId = 2, ParentId = 1 };
+        var c = new Entity { LocalId = 3, ParentId = 42 };
+
+        Scene scene = Scene.FromEntities([a, b, c], nextLocalId: 1, out List<Entity> fixedEntities);
+
+        Assert.Equal(0, c.ParentId);
+        Assert.Contains(c, fixedEntities);
+        Assert.False(scene.IsDescendantOf(a, a.LocalId) || scene.IsDescendantOf(b, b.LocalId));
+        Assert.Equal(4, scene.NextLocalId);
+    }
 }

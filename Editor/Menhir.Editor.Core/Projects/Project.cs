@@ -1,4 +1,6 @@
 using Menhir.Editor.Assets;
+using Menhir.Editor.Scenes;
+using Menhir.Editor.Serialization;
 
 namespace Menhir.Editor.Projects;
 
@@ -12,31 +14,88 @@ namespace Menhir.Editor.Projects;
 /// </summary>
 public sealed class Project
 {
-    private Project(string rootPath)
+    public const string ProjectSettingsFolder = "ProjectSettings";
+    public const string CacheFolder = "Cache";
+
+    private Project(string rootPath, ProjectSettings settings)
     {
         RootPath = rootPath;
+        Settings = settings;
         Assets = new AssetDatabase(rootPath);
     }
 
     public string RootPath { get; }
 
-    public string Name => Path.GetFileName(RootPath);
+    public ProjectSettings Settings { get; }
 
-    public string ProjectSettingsDirectory => Path.Combine(RootPath, "ProjectSettings");
+    public string Name => string.IsNullOrWhiteSpace(Settings.Name) ? Path.GetFileName(RootPath) : Settings.Name;
 
-    public string CacheDirectory => Path.Combine(RootPath, "Cache");
+    public string ProjectSettingsDirectory => Path.Combine(RootPath, ProjectSettingsFolder);
+
+    public string CacheDirectory => Path.Combine(RootPath, CacheFolder);
 
     public AssetDatabase Assets { get; }
+
+    private string SettingsFile => Path.Combine(ProjectSettingsDirectory, ProjectSettings.FileName);
+
+    private string EditorStateFile => Path.Combine(CacheDirectory, ProjectEditorState.FileName);
+
+    public static bool IsProjectFolder(string path) => Directory.Exists(Path.Combine(path, AssetPaths.Root));
 
     /// <summary>Opens an existing project. The folder must contain an Assets/ folder.</summary>
     public static Project Open(string rootPath)
     {
         string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath));
-        if (!Directory.Exists(Path.Combine(fullPath, AssetPaths.Root)))
+        if (!IsProjectFolder(fullPath))
             throw new DirectoryNotFoundException($"'{fullPath}' is not a Menhir project (no Assets folder).");
 
-        Directory.CreateDirectory(Path.Combine(fullPath, "ProjectSettings"));
-        Directory.CreateDirectory(Path.Combine(fullPath, "Cache"));
-        return new Project(fullPath);
+        Directory.CreateDirectory(Path.Combine(fullPath, ProjectSettingsFolder));
+        Directory.CreateDirectory(Path.Combine(fullPath, CacheFolder));
+        ProjectSettings settings =
+            JsonFile.Load<ProjectSettings>(Path.Combine(fullPath, ProjectSettingsFolder, ProjectSettings.FileName))
+            ?? new ProjectSettings();
+        return new Project(fullPath, settings);
+    }
+
+    /// <summary>
+    /// Creates a project in a new folder <paramref name="parentDirectory"/>/<paramref name="name"/>
+    /// with an empty scene at Assets/Scenes/Main.scene, and opens it.
+    /// </summary>
+    public static Project Create(string parentDirectory, string name)
+    {
+        name = name.Trim();
+        if (name.Length == 0 || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.IndexOfAny(['/', '\\', ':']) >= 0)
+            throw new ArgumentException($"'{name}' is not a valid folder name.", nameof(name));
+        if (!Directory.Exists(parentDirectory))
+            throw new DirectoryNotFoundException($"'{parentDirectory}' does not exist.");
+
+        string root = Path.Combine(Path.GetFullPath(parentDirectory), name);
+        if (Directory.Exists(root) && Directory.EnumerateFileSystemEntries(root).Any())
+            throw new IOException($"'{root}' already exists and is not empty.");
+
+        Directory.CreateDirectory(Path.Combine(root, AssetPaths.Root, "Scenes"));
+        Directory.CreateDirectory(Path.Combine(root, CacheFolder));
+        JsonFile.Save(Path.Combine(root, ProjectSettingsFolder, ProjectSettings.FileName), new ProjectSettings { Name = name });
+        File.WriteAllText(Path.Combine(root, ".gitignore"), $"{CacheFolder}/\n");
+        File.WriteAllText(Path.Combine(root, AssetPaths.Root, "Scenes", "Main" + SceneSerializer.Extension),
+            SceneSerializer.Serialize(new Scene()));
+
+        return Open(root);
+    }
+
+    public void SaveSettings() => JsonFile.Save(SettingsFile, Settings);
+
+    public ProjectEditorState LoadEditorState() => JsonFile.Load<ProjectEditorState>(EditorStateFile) ?? new();
+
+    public void SaveEditorState(ProjectEditorState state)
+    {
+        try
+        {
+            JsonFile.Save(EditorStateFile, state);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Only convenience data: losing it just means the editor opens another scene next time.
+        }
     }
 }

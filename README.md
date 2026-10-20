@@ -1,13 +1,13 @@
 # Menhir Engine
 
 A personal game engine. Games are scripted in C#; the editor runs scripts directly on .NET,
-and a future IL→C translator plus a native C runtime will produce the final builds.
+and the IL→C translator (IL2C) plus a native C runtime will produce the final builds.
 
 | Folder        | What                                                      |
 |---------------|-----------------------------------------------------------|
 | `Editor/`     | C# editor (Silk.NET + OpenGL 3.3 Core + ImGui docking)    |
-| `Engine/`     | Future native C runtime                                   |
-| `Translator/` | Future IL2C translator                                    |
+| `Engine/`     | Native C runtime (IL2C runtime, Boehm GC)                 |
+| `Translator/` | IL2C translator and its custom corlib ([README](Translator/README.md)) |
 | `Samples/`    | Sample projects for testing the editor                    |
 
 ## Running the editor

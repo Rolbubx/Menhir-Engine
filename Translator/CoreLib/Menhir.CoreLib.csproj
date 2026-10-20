@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Menhir's own base library (System.Object, String, Console...), used instead of .NET's when
+    code is translated to C by IL2C. Built without any standard library: this assembly defines
+    the System types itself. Methods marked InternalCall are implemented in C (Engine/Runtime).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Menhir.CoreLib</AssemblyName>
+    <RootNamespace>System</RootNamespace>
+    <NoStdLib>true</NoStdLib>
+    <NoCompilerStandardLib>true</NoCompilerStandardLib>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <RuntimeMetadataVersion>v4.0.30319</RuntimeMetadataVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Members of System types that .NET has but this library leaves out are fine here. -->
+    <NoWarn>$(NoWarn);CS0660;CS0661;CS8021;CS0649;CS0169</NoWarn>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Menhir.Translator.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Menhir.Translator\Menhir.Translator.csproj" />
+    <!-- Built first; the tests run them from their own output folders. -->
+    <ProjectReference Include="..\TestPrograms\Menhir\TestPrograms.Menhir.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\TestPrograms\Dotnet\TestPrograms.Dotnet.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

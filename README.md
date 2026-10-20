@@ -21,3 +21,6 @@ dotnet run --project Editor/Menhir.Editor
 The window layout and editor preferences are stored per user, outside the repo:
 `%APPDATA%/Menhir/Editor` on Windows, `~/.config/Menhir/Editor` on Linux.
 Use **Window → Reset Layout** to restore the default layout.
+
+The editor font is [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), distributed under the
+SIL Open Font License (`Editor/Menhir.Editor/Resources/Fonts/JetBrainsMono-OFL.txt`).

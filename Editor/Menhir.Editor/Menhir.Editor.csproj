@@ -24,4 +24,8 @@
     <PackageReference Include="ImGui.NET" Version="1.90.8.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Resources\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

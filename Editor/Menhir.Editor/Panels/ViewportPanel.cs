@@ -18,6 +18,6 @@ public sealed class ViewportPanel : EditorPanel
     protected override void DrawContent()
     {
         ImGui.SetCursorPos(ImGui.GetCursorPos() + new Vector2(8, 8));
-        Placeholder("Scene rendering - Phase 2.");
+        Placeholder("Scene rendering — Phase 2.");
     }
 }

@@ -75,7 +75,7 @@ public sealed class EditorApplication : IDisposable
     {
         _gl = _window.CreateOpenGL();
         _input = _window.CreateInput();
-        _imgui = new ImGuiController(_gl, _window, _input, ConfigureImGui);
+        _imgui = new ImGuiController(_gl, _window, _input, EditorFonts.CreateConfig(), ConfigureImGui);
 
         Console.WriteLine($"OpenGL {_gl.GetStringS(StringName.Version)} — {_gl.GetStringS(StringName.Renderer)}");
     }

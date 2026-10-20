@@ -17,6 +17,9 @@ public interface IRenderer : IDisposable
 
     void DrawMesh(IMesh mesh, in Matrix4x4 model, Vector4 color);
 
+    /// <summary>Flat-colored silhouette around a mesh already drawn with <paramref name="model"/>.</summary>
+    void DrawOutline(IMesh mesh, in Matrix4x4 model, Vector4 color);
+
     /// <summary>Editor grid on the y = 0 plane, fading with distance. Draw it after opaque meshes.</summary>
     void DrawGrid();
 

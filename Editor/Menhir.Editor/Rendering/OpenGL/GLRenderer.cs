@@ -6,6 +6,8 @@ namespace Menhir.Editor.Rendering.OpenGL;
 /// <summary>OpenGL 3.3 Core implementation of <see cref="IRenderer"/>.</summary>
 public sealed unsafe class GLRenderer : IRenderer
 {
+    private const float OutlineScale = 1.06f;
+
     private static readonly Vector3 LightDirection = Vector3.Normalize(new Vector3(-0.4f, -1f, -0.6f));
 
     private readonly GL _gl;
@@ -83,7 +85,31 @@ public sealed unsafe class GLRenderer : IRenderer
         _meshShader.Set("uViewProjection", _viewProjection);
         _meshShader.Set("uColor", color);
         _meshShader.Set("uLightDirection", LightDirection);
+        _meshShader.Set("uUnlit", 0);
         ((GLMesh)mesh).Draw();
+    }
+
+    public void DrawOutline(IMesh mesh, in Matrix4x4 model, Vector4 color)
+    {
+        EnsureInPass();
+
+        // Inverted hull: a slightly larger copy showing only its back faces,
+        // which peek out around the original mesh.
+        Matrix4x4 hull = Matrix4x4.CreateScale(OutlineScale) * model;
+
+        _gl.Enable(EnableCap.CullFace);
+        _gl.CullFace(TriangleFace.Front);
+        _gl.FrontFace(FrontFaceDirection.Ccw);
+
+        _meshShader.Use();
+        _meshShader.Set("uModel", hull);
+        _meshShader.Set("uNormalMatrix", Matrix4x4.Identity);
+        _meshShader.Set("uViewProjection", _viewProjection);
+        _meshShader.Set("uColor", color);
+        _meshShader.Set("uUnlit", 1);
+        ((GLMesh)mesh).Draw();
+
+        _gl.CullFace(TriangleFace.Back);
     }
 
     public void DrawGrid()

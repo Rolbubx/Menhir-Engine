@@ -22,6 +22,8 @@ The window layout and editor preferences are stored per user, outside the repo:
 `%APPDATA%/Menhir/Editor` on Windows, `~/.config/Menhir/Editor` on Linux.
 Use **Window → Reset Layout** to restore the default layout.
 
+Run the unit tests with `dotnet test`.
+
 ### Viewport controls
 
 | Input                    | Action                    |
@@ -31,6 +33,13 @@ Use **Window → Reset Layout** to restore the default layout.
 | Q / E                    | Move down / up            |
 | Shift                    | Move 3× faster            |
 | Mouse wheel              | Change fly speed          |
+
+### Hierarchy
+
+- Click to select (the selection is outlined in orange in the viewport); click the empty area to deselect
+- **+** button or right-click: create an empty entity or a cube (as a child from an entity's menu)
+- Double-click or **F2** to rename (**Enter** to confirm, **Esc** to cancel); **Del** deletes with children
+- Drag an entity onto another to reparent it (its world position is kept); drop it in the empty area to make it a root
 
 World conventions: right-handed, Y up, 1 unit = 1 meter.
 

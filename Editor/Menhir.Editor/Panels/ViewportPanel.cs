@@ -57,7 +57,8 @@ public sealed class ViewportPanel : EditorPanel, IDisposable
 
         Vector2 pixelScale = ImGui.GetIO().DisplayFramebufferScale;
         _target.Resize((int)(size.X * pixelScale.X), (int)(size.Y * pixelScale.Y));
-        _sceneRenderer.Render(_context.ActiveScene, _target, _camera.GetViewParams(size.X / size.Y));
+        _sceneRenderer.Render(_context.ActiveScene, _target, _camera.GetViewParams(size.X / size.Y),
+            _context.SelectedEntityId);
 
         // GL textures start at the bottom-left, ImGui images at the top-left: flip V.
         ImGui.Image(_target.ColorTexture, size, new Vector2(0, 1), new Vector2(1, 0));

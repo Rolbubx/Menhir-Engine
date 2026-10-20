@@ -27,11 +27,17 @@ internal static class Shaders
 
         uniform vec4 uColor;
         uniform vec3 uLightDirection;
+        uniform int uUnlit;
 
         out vec4 fragColor;
 
         void main()
         {
+            if (uUnlit != 0)
+            {
+                fragColor = uColor;
+                return;
+            }
             float diffuse = max(dot(normalize(vNormal), -uLightDirection), 0.0);
             float sky = 0.5 + 0.5 * normalize(vNormal).y;
             vec3 color = uColor.rgb * (0.12 + 0.13 * sky + 0.75 * diffuse);

@@ -57,6 +57,8 @@ internal sealed unsafe class GLShaderProgram : IDisposable
             _gl.UniformMatrix4(Location(name), 1, false, (float*)ptr);
     }
 
+    public void Set(string name, int value) => _gl.Uniform1(Location(name), value);
+
     public void Set(string name, float value) => _gl.Uniform1(Location(name), value);
 
     public void Set(string name, Vector3 value) => _gl.Uniform3(Location(name), value.X, value.Y, value.Z);

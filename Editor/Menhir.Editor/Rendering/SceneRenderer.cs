@@ -7,6 +7,7 @@ namespace Menhir.Editor.Rendering;
 public sealed class SceneRenderer : IDisposable
 {
     private static readonly Vector4 ClearColor = new(0.19f, 0.2f, 0.22f, 1f);
+    private static readonly Vector4 SelectionColor = new(1f, 0.6f, 0.1f, 1f);
 
     private readonly IRenderer _renderer;
     private readonly Dictionary<PrimitiveMesh, IMesh> _primitives = new();
@@ -17,7 +18,8 @@ public sealed class SceneRenderer : IDisposable
         _primitives[PrimitiveMesh.Cube] = renderer.CreateMesh(Primitives.CreateCube());
     }
 
-    public void Render(Scene scene, IRenderTarget target, in ViewParams view)
+    /// <param name="selectedEntityId">Entity drawn with a selection outline, 0 for none.</param>
+    public void Render(Scene scene, IRenderTarget target, in ViewParams view, long selectedEntityId = 0)
     {
         _renderer.BeginPass(target, view, ClearColor);
 
@@ -26,7 +28,10 @@ public sealed class SceneRenderer : IDisposable
             if (entity.GetComponent<MeshRenderer>() is not { } meshRenderer)
                 continue;
             Matrix4x4 world = scene.GetWorldMatrix(entity);
-            _renderer.DrawMesh(_primitives[meshRenderer.Mesh], world, meshRenderer.Color);
+            IMesh mesh = _primitives[meshRenderer.Mesh];
+            _renderer.DrawMesh(mesh, world, meshRenderer.Color);
+            if (entity.LocalId == selectedEntityId)
+                _renderer.DrawOutline(mesh, world, SelectionColor);
         }
 
         _renderer.DrawGrid();

@@ -11,6 +11,13 @@ public enum LightType
     Spot,
 }
 
+public enum LightShadows
+{
+    None,
+    Hard,
+    Soft,
+}
+
 /// <summary>
 /// A light, shining along the entity's forward axis (-Z) for directional and spot lights.
 /// The first directional light is the sun: it also positions the sun of the procedural skybox.
@@ -34,4 +41,10 @@ public sealed class Light : Component
     [Range(1, 179)]
     [Tooltip("Spot lights: angle of the cone, in degrees.")]
     public float SpotAngle { get; set; } = 30f;
+
+    [Tooltip("Soft shadows have filtered edges (if the project allows them, see Project Settings).")]
+    public LightShadows Shadows { get; set; } = LightShadows.None;
+
+    [Range(0, 1)]
+    public float ShadowStrength { get; set; } = 1f;
 }

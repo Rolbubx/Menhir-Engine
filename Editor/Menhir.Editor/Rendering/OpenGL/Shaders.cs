@@ -48,6 +48,25 @@ internal static class Shaders
         uniform vec4 uLightDirectionCos[8];    // xyz spot direction, w cos(outer) (-1: point light)
         uniform float uLightCosInner[8];
 
+        // Shadows (see GLShadowMaps and Lighting.ShadowSetup).
+        uniform int uReceiveShadows;
+        uniform int uMainShadowOn;
+        uniform sampler2DShadow uMainShadowMap;
+        uniform int uCascadeCount;
+        uniform mat4 uCascadeMatrix[4];
+        uniform vec4 uCascadeSphere[4];   // center, squared radius
+        uniform vec4 uCascadeRect[4];
+        uniform vec4 uMainShadowParams;   // strength, filter taps, max distance, fade border
+        uniform float uMainShadowTexel;
+
+        uniform int uAdditionalShadowOn;
+        uniform sampler2DShadow uAdditionalShadowMap;
+        uniform mat4 uSliceMatrix[16];
+        uniform vec4 uSliceRect[16];
+        uniform float uAdditionalShadowTexel;
+        uniform int uLightShadowSlice[8];  // first slice, -1 without shadows
+        uniform vec2 uLightShadowParams[8]; // strength, filter taps
+
         out vec4 fragColor;
 
         struct Brdf
@@ -66,6 +85,70 @@ internal static class Shaders
             vec3 upper = mix(uAmbientHorizon, uAmbientTop, clamp(y, 0.0, 1.0));
             vec3 lower = mix(uAmbientHorizon, uAmbientBottom, clamp(-y, 0.0, 1.0));
             return y >= 0.0 ? upper : lower;
+        }
+
+        // Hardware 2x2 comparisons, on a grid of taps × taps for soft shadows (0: one tap, hard).
+        // Taps stay inside the slice's tile so neighbors in the atlas do not bleed in.
+        float SampleShadow(sampler2DShadow map, vec3 coord, vec4 rect, int taps, float texel)
+        {
+            if (coord.z >= 1.0)
+                return 1.0;
+            float margin = texel * (float(taps) * 0.5 + 1.0);
+            coord.xy = clamp(coord.xy, rect.xy + margin, rect.zw - margin);
+            if (taps == 0)
+                return texture(map, coord);
+            float sum = 0.0;
+            float center = float(taps - 1) * 0.5;
+            for (int y = 0; y < taps; y++)
+            for (int x = 0; x < taps; x++)
+                sum += texture(map, vec3(coord.xy + (vec2(x, y) - center) * texel, coord.z));
+            return sum / float(taps * taps);
+        }
+
+        float MainLightShadow(vec3 position)
+        {
+            if (uMainShadowOn == 0 || uReceiveShadows == 0)
+                return 1.0;
+            int cascade = -1;
+            for (int i = 0; i < uCascadeCount; i++)
+            {
+                vec3 d = position - uCascadeSphere[i].xyz;
+                if (dot(d, d) < uCascadeSphere[i].w)
+                {
+                    cascade = i;
+                    break;
+                }
+            }
+            if (cascade < 0)
+                return 1.0;
+            vec4 coord = uCascadeMatrix[cascade] * vec4(position, 1.0);
+            float shadow = SampleShadow(uMainShadowMap, coord.xyz / coord.w, uCascadeRect[cascade],
+                int(uMainShadowParams.y), uMainShadowTexel);
+            // Fade out towards Max Distance.
+            float distance = length(position - uCameraPosition);
+            float fade = clamp((uMainShadowParams.z - distance) / (uMainShadowParams.z * uMainShadowParams.w), 0.0, 1.0);
+            return mix(1.0, shadow, uMainShadowParams.x * fade);
+        }
+
+        float AdditionalLightShadow(int light, vec3 position)
+        {
+            if (uAdditionalShadowOn == 0 || uReceiveShadows == 0 || uLightShadowSlice[light] < 0)
+                return 1.0;
+            int slice = uLightShadowSlice[light];
+            if (uLightDirectionCos[light].w <= -1.0)
+            {
+                // Point light: the cube face facing the point (+X, -X, +Y, -Y, +Z, -Z).
+                vec3 d = position - uLightPositionRange[light].xyz;
+                vec3 a = abs(d);
+                int face = a.x >= a.y && a.x >= a.z ? (d.x > 0.0 ? 0 : 1)
+                         : a.y >= a.z ? (d.y > 0.0 ? 2 : 3)
+                         : (d.z > 0.0 ? 4 : 5);
+                slice += face;
+            }
+            vec4 coord = uSliceMatrix[slice] * vec4(position, 1.0);
+            float shadow = SampleShadow(uAdditionalShadowMap, coord.xyz / coord.w, uSliceRect[slice],
+                int(uLightShadowParams[light].y), uAdditionalShadowTexel);
+            return mix(1.0, shadow, uLightShadowParams[light].x);
         }
 
         vec3 DirectLight(Brdf brdf, vec3 n, vec3 v, vec3 l, vec3 radiance)
@@ -107,7 +190,7 @@ internal static class Shaders
 
             // Main light.
             float nl = clamp(dot(n, uToSun), 0.0, 1.0);
-            color += DirectLight(brdf, n, v, uToSun, uSunColor * nl);
+            color += DirectLight(brdf, n, v, uToSun, uSunColor * (nl * MainLightShadow(vWorldPosition)));
 
             // Additional lights.
             for (int i = 0; i < uLightCount; i++)
@@ -127,7 +210,7 @@ internal static class Shaders
                     float spot = clamp((dot(uLightDirectionCos[i].xyz, -l) - cosOuter) * invAngleRange, 0.0, 1.0);
                     attenuation *= spot * spot;
                 }
-                float nli = clamp(dot(n, l), 0.0, 1.0);
+                float nli = clamp(dot(n, l), 0.0, 1.0) * AdditionalLightShadow(i, vWorldPosition);
                 color += DirectLight(brdf, n, v, l, uLightColor[i].rgb * attenuation * nli);
             }
 

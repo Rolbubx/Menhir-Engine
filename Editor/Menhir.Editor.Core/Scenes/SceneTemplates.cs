@@ -8,7 +8,7 @@ namespace Menhir.Editor.Scenes;
 public static class SceneTemplates
 {
     /// <summary>
-    /// Like a new URP scene: a sun, the procedural sky and a global volume with tonemapping,
+    /// Like a new URP scene: a sun with soft shadows, the procedural sky and a global volume with tonemapping,
     /// a little bloom and a light vignette.
     /// </summary>
     public static Scene CreateDefault()
@@ -18,7 +18,7 @@ public static class SceneTemplates
         Entity light = scene.CreateEntity("Directional Light");
         light.Transform.Position = new Vector3(0, 3, 0);
         light.Transform.Rotation = EulerAngles.ToQuaternion(new Vector3(-50, -30, 0));
-        light.Components.Add(new Light());
+        light.Components.Add(new Light { Shadows = LightShadows.Soft });
 
         Entity environment = scene.CreateEntity("Environment");
         environment.Components.Add(new ProceduralSkybox());

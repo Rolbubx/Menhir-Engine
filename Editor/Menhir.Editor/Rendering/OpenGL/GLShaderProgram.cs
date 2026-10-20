@@ -79,6 +79,18 @@ internal sealed unsafe class GLShaderProgram : IDisposable
             _gl.Uniform4(Location(name), (uint)values.Length, (float*)ptr);
     }
 
+    public void Set(string name, ReadOnlySpan<int> values)
+    {
+        fixed (int* ptr = values)
+            _gl.Uniform1(Location(name), (uint)values.Length, ptr);
+    }
+
+    public void Set(string name, ReadOnlySpan<Matrix4x4> values)
+    {
+        fixed (Matrix4x4* ptr = values)
+            _gl.UniformMatrix4(Location(name), (uint)values.Length, false, (float*)ptr);
+    }
+
     public void Set(string name, ReadOnlySpan<float> values)
     {
         fixed (float* ptr = values)

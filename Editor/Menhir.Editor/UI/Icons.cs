@@ -36,6 +36,7 @@ public static class Icons
     public const string Trash = "\ue18e";
     public const string Copy = "\ue0a2";
     public const string Refresh = "\ue149";
+    public const string Settings = "\ue158";
     public const string More = "\ue0bb"; // ellipsis-vertical
     public const string ChevronRight = "\ue073";
     public const string ArrowUp = "\ue04e";

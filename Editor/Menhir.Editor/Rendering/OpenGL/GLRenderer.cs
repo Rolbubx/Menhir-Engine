@@ -25,6 +25,18 @@ public sealed unsafe class GLRenderer : IRenderer
     private readonly GLShaderProgram _gridShader;
     private readonly GLShaderProgram _skyShader;
     private readonly GLPostProcessor _postProcessor;
+    private readonly GLShadowMaps _shadowMaps;
+
+    // Set by RenderShadows for the frame that follows.
+    private MainLightShadows? _mainShadows;
+    private AdditionalLightShadows? _additionalShadows;
+    private readonly Matrix4x4[] _cascadeMatrices = new Matrix4x4[4];
+    private readonly Vector4[] _cascadeSpheres = new Vector4[4];
+    private readonly Vector4[] _cascadeRects = new Vector4[4];
+    private readonly Matrix4x4[] _sliceMatrices = new Matrix4x4[ShadowSetup.MaxAdditionalSlices];
+    private readonly Vector4[] _sliceRects = new Vector4[ShadowSetup.MaxAdditionalSlices];
+    private readonly int[] _lightShadowSlice = new int[SceneEnvironment.MaxAdditionalLights];
+    private readonly Vector2[] _lightShadowParams = new Vector2[SceneEnvironment.MaxAdditionalLights];
     private readonly uint _gridVao;
     private readonly uint _gridVbo;
     private readonly uint _emptyVao;
@@ -50,6 +62,7 @@ public sealed unsafe class GLRenderer : IRenderer
         _gridShader = new GLShaderProgram(gl, Shaders.GridVertex, Shaders.GridFragment);
         _skyShader = new GLShaderProgram(gl, SkyShaders.Vertex, SkyShaders.Fragment);
         _postProcessor = new GLPostProcessor(gl);
+        _shadowMaps = new GLShadowMaps(gl);
 
         float[] corners = [-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1];
         _gridVao = gl.GenVertexArray();
@@ -68,6 +81,17 @@ public sealed unsafe class GLRenderer : IRenderer
     public IMesh CreateMesh(MeshData data) => new GLMesh(_gl, data);
 
     public ITexture CreateTexture(ImageData image) => new GLTexture(_gl, image);
+
+    public void RenderShadows(SceneEnvironment environment, MainLightShadows? main, AdditionalLightShadows? additional,
+        IReadOnlyList<MeshDraw> casters)
+    {
+        if (_phase != Phase.None)
+            throw new InvalidOperationException("Render shadows before BeginFrame.");
+        _mainShadows = main;
+        _additionalShadows = additional;
+        if (main != null || additional != null)
+            _shadowMaps.Render(environment, main, additional, casters);
+    }
 
     public void BeginFrame(IRenderTarget target, in ViewParams view, SceneEnvironment environment, Vector3 clearColor)
     {
@@ -122,6 +146,63 @@ public sealed unsafe class GLRenderer : IRenderer
             _meshShader.Set("uLightDirectionCos", _lightDirectionCos.AsSpan(0, count));
             _meshShader.Set("uLightCosInner", _lightCosInner.AsSpan(0, count));
         }
+        SetShadows(count);
+    }
+
+    private void SetShadows(int lightCount)
+    {
+        // Shadow maps live on units 5 and 6, which the post-processing passes do not use.
+        if (_mainShadows is { } main)
+        {
+            int cascades = main.Cascades.Count;
+            for (int i = 0; i < cascades; i++)
+            {
+                _cascadeMatrices[i] = main.Cascades[i].WorldToShadow;
+                _cascadeSpheres[i] = main.CascadeSpheres[i];
+                _cascadeRects[i] = main.Cascades[i].AtlasRect;
+            }
+            _meshShader.Set("uMainShadowOn", 1);
+            _meshShader.SetTexture("uMainShadowMap", 5, _shadowMaps.Main.Texture);
+            _meshShader.Set("uCascadeCount", cascades);
+            _meshShader.Set("uCascadeMatrix", _cascadeMatrices.AsSpan(0, cascades));
+            _meshShader.Set("uCascadeSphere", _cascadeSpheres.AsSpan(0, cascades));
+            _meshShader.Set("uCascadeRect", _cascadeRects.AsSpan(0, cascades));
+            _meshShader.Set("uMainShadowParams", new Vector4(main.Strength, main.Filter, main.MaxDistance, main.FadeBorder));
+            _meshShader.Set("uMainShadowTexel", 1f / main.AtlasSize);
+        }
+        else
+        {
+            _meshShader.Set("uMainShadowOn", 0);
+        }
+
+        if (_additionalShadows is { } additional)
+        {
+            for (int i = 0; i < additional.Slices.Count; i++)
+            {
+                _sliceMatrices[i] = additional.Slices[i].WorldToShadow;
+                _sliceRects[i] = additional.Slices[i].AtlasRect;
+            }
+            for (int i = 0; i < lightCount; i++)
+            {
+                bool has = i < additional.FirstSlice.Length;
+                _lightShadowSlice[i] = has ? additional.FirstSlice[i] : -1;
+                _lightShadowParams[i] = has ? new Vector2(additional.Strength[i], additional.Filter[i]) : Vector2.Zero;
+            }
+            _meshShader.Set("uAdditionalShadowOn", 1);
+            _meshShader.SetTexture("uAdditionalShadowMap", 6, _shadowMaps.Additional.Texture);
+            _meshShader.Set("uSliceMatrix", _sliceMatrices.AsSpan(0, additional.Slices.Count));
+            _meshShader.Set("uSliceRect", _sliceRects.AsSpan(0, additional.Slices.Count));
+            _meshShader.Set("uAdditionalShadowTexel", 1f / additional.AtlasSize);
+            if (lightCount > 0)
+            {
+                _meshShader.Set("uLightShadowSlice", _lightShadowSlice.AsSpan(0, lightCount));
+                _meshShader.Set("uLightShadowParams", _lightShadowParams.AsSpan(0, lightCount));
+            }
+        }
+        else
+        {
+            _meshShader.Set("uAdditionalShadowOn", 0);
+        }
     }
 
     public void DrawSkybox(ProceduralSkybox sky)
@@ -175,6 +256,7 @@ public sealed unsafe class GLRenderer : IRenderer
         _meshShader.Set("uBaseColor", surface.BaseColor);
         _meshShader.Set("uMetallic", surface.Metallic);
         _meshShader.Set("uSmoothness", surface.Smoothness);
+        _meshShader.Set("uReceiveShadows", surface.ReceiveShadows ? 1 : 0);
         ((GLMesh)mesh).Draw();
     }
 
@@ -251,6 +333,8 @@ public sealed unsafe class GLRenderer : IRenderer
         _gl.Viewport(_previousViewport[0], _previousViewport[1], (uint)_previousViewport[2], (uint)_previousViewport[3]);
         _target = null;
         _environment = null;
+        _mainShadows = null;
+        _additionalShadows = null;
         _phase = Phase.None;
     }
 
@@ -269,6 +353,7 @@ public sealed unsafe class GLRenderer : IRenderer
         _gridShader.Dispose();
         _skyShader.Dispose();
         _postProcessor.Dispose();
+        _shadowMaps.Dispose();
         _gl.DeleteVertexArray(_gridVao);
         _gl.DeleteBuffer(_gridVbo);
         _gl.DeleteVertexArray(_emptyVao);

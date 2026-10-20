@@ -1,4 +1,5 @@
 using System.Numerics;
+using Menhir.Editor.Mathematics;
 
 namespace Menhir.Editor.Rendering;
 
@@ -38,19 +39,8 @@ public sealed class EditorCamera
 
     public Matrix4x4 View => Matrix4x4.CreateLookAt(Position, Position + Forward, Vector3.UnitY);
 
-    /// <summary>
-    /// OpenGL-style projection (clip depth -1..1). System.Numerics' own perspective
-    /// helpers target a 0..1 depth range, which would waste half of GL's depth precision.
-    /// </summary>
-    public Matrix4x4 GetProjection(float aspect)
-    {
-        float f = 1f / MathF.Tan(FieldOfViewY / 2f);
-        return new Matrix4x4(
-            f / aspect, 0, 0, 0,
-            0, f, 0, 0,
-            0, 0, (Far + Near) / (Near - Far), -1,
-            0, 0, 2f * Far * Near / (Near - Far), 0);
-    }
+    /// <summary>OpenGL-style projection (clip depth -1..1).</summary>
+    public Matrix4x4 GetProjection(float aspect) => Projections.Perspective(FieldOfViewY, aspect, Near, Far);
 
     public ViewParams GetViewParams(float aspect) =>
         new(View, GetProjection(aspect), Position, FieldOfViewY, Near, Far);

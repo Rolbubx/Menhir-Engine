@@ -183,19 +183,19 @@ public sealed class EditorApplication : IDisposable
             new InspectorPanel(_context),
             new ProjectPanel(_context, OpenSceneAsset) { GridView = _preferences.ProjectGridView },
             new ConsolePanel(Log.Messages, _preferences.ConsoleFilter),
+            new ProjectSettingsPanel(_context),
         ];
         foreach (EditorPanel panel in _panels)
-        {
-            if (_preferences.OpenPanels.TryGetValue(panel.Title, out bool open))
-                panel.IsOpen = open;
-        }
+            panel.IsOpen = _preferences.OpenPanels.TryGetValue(panel.Title, out bool open) ? open : panel.OpenByDefault;
     }
 
-    private void ShowConsole()
+    private void ShowConsole() => ShowPanel<ConsolePanel>();
+
+    private void ShowPanel<T>() where T : EditorPanel
     {
-        EditorPanel console = _panels.First(p => p is ConsolePanel);
-        console.IsOpen = true;
-        ImGui.SetWindowFocus(console.WindowId);
+        EditorPanel panel = _panels.OfType<T>().First();
+        panel.IsOpen = true;
+        ImGui.SetWindowFocus(panel.WindowId);
     }
 
     /// <summary>
@@ -312,6 +312,9 @@ public sealed class EditorApplication : IDisposable
                 history.Undo();
             if (ImGui.MenuItem(history.RedoName is { } redo ? $"Redo {redo}" : "Redo", "Ctrl+Y", false, history.CanRedo))
                 history.Redo();
+            ImGui.Separator();
+            if (ImGui.MenuItem("Project Settings..."))
+                ShowPanel<ProjectSettingsPanel>();
             ImGui.EndMenu();
         }
 
@@ -327,7 +330,7 @@ public sealed class EditorApplication : IDisposable
             if (ImGui.MenuItem("Reset Layout"))
             {
                 foreach (EditorPanel panel in _panels)
-                    panel.IsOpen = true;
+                    panel.IsOpen = panel.OpenByDefault;
                 _dockspace.RequestLayoutReset();
             }
             ImGui.EndMenu();

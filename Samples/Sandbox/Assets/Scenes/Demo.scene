@@ -132,7 +132,9 @@
           "color": [1, 0.90754706, 0.68002033, 1],
           "intensity": 1,
           "range": 10,
-          "spotAngle": 30
+          "spotAngle": 30,
+          "shadows": "Soft",
+          "shadowStrength": 1
         }
       ]
     },

@@ -10,7 +10,10 @@ namespace Menhir.Editor.Lighting;
 /// <param name="SpotCosOuter">Cosine of half the cone angle; -1 for point lights.</param>
 /// <param name="SpotCosInner">Where the cone starts to fade.</param>
 public readonly record struct PunctualLight(Vector3 Position, Vector3 Direction, Vector3 Color, float Range,
-    float SpotCosOuter, float SpotCosInner);
+    float SpotCosOuter, float SpotCosInner, LightShadows Shadows = LightShadows.None, float ShadowStrength = 1f)
+{
+    public bool IsSpot => SpotCosOuter > -1f;
+}
 
 /// <summary>The active post-processing effects of a scene (the first active one of each kind).</summary>
 public sealed class PostProcessStack
@@ -53,6 +56,10 @@ public sealed class SceneEnvironment
     /// <summary>Linear color times intensity of the sun; zero when the scene has no directional light.</summary>
     public required Vector3 SunColor { get; init; }
 
+    public LightShadows SunShadows { get; init; }
+
+    public float SunShadowStrength { get; init; } = 1f;
+
     public required Vector3 AmbientTop { get; init; }
     public required Vector3 AmbientHorizon { get; init; }
     public required Vector3 AmbientBottom { get; init; }
@@ -67,6 +74,8 @@ public sealed class SceneEnvironment
 
         Vector3 toSun = SkyModel.DefaultToSun;
         Vector3 sunColor = Vector3.Zero;
+        LightShadows sunShadows = LightShadows.None;
+        float sunShadowStrength = 1f;
         var additional = new List<PunctualLight>();
         bool hasSun = false;
 
@@ -85,13 +94,16 @@ public sealed class SceneEnvironment
                 hasSun = true;
                 toSun = -forward;
                 sunColor = color;
+                sunShadows = light.Shadows;
+                sunShadowStrength = light.ShadowStrength;
             }
             else if (additional.Count < MaxAdditionalLights)
             {
                 float outer = light.LightType == LightType.Spot ? Math.Clamp(light.SpotAngle, 1f, 179f) * MathF.PI / 360f : MathF.PI;
                 additional.Add(new PunctualLight(world.Translation, forward, color, MathF.Max(light.Range, 0.01f),
                     light.LightType == LightType.Spot ? MathF.Cos(outer) : -1f,
-                    light.LightType == LightType.Spot ? MathF.Cos(outer * 0.8f) : -1f));
+                    light.LightType == LightType.Spot ? MathF.Cos(outer * 0.8f) : -1f,
+                    light.Shadows, light.ShadowStrength));
             }
         }
 
@@ -101,6 +113,8 @@ public sealed class SceneEnvironment
             Sky = sky,
             ToSun = toSun,
             SunColor = sunColor,
+            SunShadows = sunShadows,
+            SunShadowStrength = sunShadowStrength,
             AmbientTop = top,
             AmbientHorizon = horizon,
             AmbientBottom = bottom,

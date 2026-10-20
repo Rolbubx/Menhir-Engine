@@ -25,6 +25,13 @@ public interface IRenderer : IDisposable
     /// <summary>An 8-bit RGBA texture (e.g. a color lookup table).</summary>
     ITexture CreateTexture(ImageData image);
 
+    /// <summary>
+    /// Renders this frame's shadow maps from <paramref name="casters"/>; call before <see cref="BeginFrame"/>.
+    /// Meshes drawn in the frame receive these shadows. Pass nulls (or skip the call) for none.
+    /// </summary>
+    void RenderShadows(SceneEnvironment environment, MainLightShadows? main, AdditionalLightShadows? additional,
+        IReadOnlyList<MeshDraw> casters);
+
     /// <summary>Binds <paramref name="target"/>'s HDR buffer and clears it to <paramref name="clearColor"/> (linear).</summary>
     void BeginFrame(IRenderTarget target, in ViewParams view, SceneEnvironment environment, Vector3 clearColor);
 
@@ -72,7 +79,10 @@ public interface ITexture : IDisposable
 }
 
 /// <summary>Material values of a mesh, like URP's Lit (linear base color).</summary>
-public readonly record struct SurfaceParams(Vector4 BaseColor, float Metallic, float Smoothness);
+public readonly record struct SurfaceParams(Vector4 BaseColor, float Metallic, float Smoothness, bool ReceiveShadows = true);
+
+/// <summary>A mesh to draw (or to cast shadows) with its world matrix.</summary>
+public readonly record struct MeshDraw(IMesh Mesh, Matrix4x4 Model, SurfaceParams Surface);
 
 /// <summary>Camera data for a frame.</summary>
 public readonly record struct ViewParams(

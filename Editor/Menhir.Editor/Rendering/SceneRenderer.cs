@@ -2,6 +2,8 @@ using System.Numerics;
 using Menhir.Editor.Assets;
 using Menhir.Editor.Lighting;
 using Menhir.Editor.Logging;
+using Menhir.Editor.Mathematics;
+using Menhir.Editor.Projects;
 using Menhir.Editor.Scenes;
 
 namespace Menhir.Editor.Rendering;
@@ -12,6 +14,7 @@ public sealed class ViewportOptions
     public bool Skybox { get; set; } = true;
     public bool PostProcessing { get; set; } = true;
     public bool Grid { get; set; } = true;
+    public bool Shadows { get; set; } = true;
 }
 
 /// <summary>Draws a <see cref="Scene"/> through an <see cref="IRenderer"/>.</summary>
@@ -20,6 +23,7 @@ public sealed class SceneRenderer : IDisposable
     // Background when the skybox is hidden (linear; the old flat gray).
     private static readonly Vector3 ClearColor = new(0.026f, 0.029f, 0.034f);
     private static readonly Vector4 SelectionColor = new(1f, 0.6f, 0.1f, 1f);
+    private static readonly Bounds CubeBounds = new(new Vector3(-0.5f), new Vector3(0.5f));
 
     private readonly IRenderer _renderer;
     private readonly Func<Guid, string?> _resolveAssetPath;
@@ -34,21 +38,46 @@ public sealed class SceneRenderer : IDisposable
         _primitives[PrimitiveMesh.Cube] = renderer.CreateMesh(Primitives.CreateCube());
     }
 
+    /// <param name="settings">The project's pipeline settings (shadows).</param>
     /// <param name="selectedEntityId">Entity drawn with a selection outline, 0 for none.</param>
-    public void Render(Scene scene, IRenderTarget target, in ViewParams view, ViewportOptions options, long selectedEntityId = 0)
+    public void Render(Scene scene, IRenderTarget target, in ViewParams view, ViewportOptions options,
+        RenderingSettings settings, long selectedEntityId = 0)
     {
         SceneEnvironment environment = SceneEnvironment.Gather(scene);
-        _renderer.BeginFrame(target, view, environment, ClearColor);
-        if (options.Skybox)
-            _renderer.DrawSkybox(environment.Sky);
 
+        var draws = new List<MeshDraw>();
+        var casters = new List<MeshDraw>();
+        Bounds? casterBounds = null;
         foreach (Entity entity in scene.Entities)
         {
             if (entity.GetComponent<MeshRenderer>() is not { } meshRenderer)
                 continue;
-            _renderer.DrawMesh(_primitives[meshRenderer.Mesh], scene.GetWorldMatrix(entity),
-                new SurfaceParams(meshRenderer.Color, meshRenderer.Metallic, meshRenderer.Smoothness));
+            Matrix4x4 world = scene.GetWorldMatrix(entity);
+            var draw = new MeshDraw(_primitives[meshRenderer.Mesh], world,
+                new SurfaceParams(meshRenderer.Color, meshRenderer.Metallic, meshRenderer.Smoothness, meshRenderer.ReceiveShadows));
+            draws.Add(draw);
+            if (!meshRenderer.CastShadows)
+                continue;
+            casters.Add(draw);
+            Bounds bounds = Bounds.Transform(CubeBounds, world);
+            casterBounds = casterBounds?.Encapsulate(bounds) ?? bounds;
         }
+
+        if (options.Shadows)
+        {
+            Matrix4x4.Invert(view.View, out Matrix4x4 cameraToWorld);
+            var camera = new CameraInfo(cameraToWorld, view.FieldOfViewY, target.Width / (float)target.Height, view.Near);
+            _renderer.RenderShadows(environment,
+                ShadowSetup.MainLight(environment, camera, settings, casterBounds),
+                ShadowSetup.AdditionalLights(environment, settings, casterBounds),
+                casters);
+        }
+
+        _renderer.BeginFrame(target, view, environment, ClearColor);
+        if (options.Skybox)
+            _renderer.DrawSkybox(environment.Sky);
+        foreach (MeshDraw draw in draws)
+            _renderer.DrawMesh(draw.Mesh, draw.Model, draw.Surface);
 
         if (options.Grid)
             _renderer.DrawGrid();

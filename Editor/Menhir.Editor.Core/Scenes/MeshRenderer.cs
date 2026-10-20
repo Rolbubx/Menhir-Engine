@@ -24,4 +24,8 @@ public sealed class MeshRenderer : Component
 
     [Range(0, 1)]
     public float Smoothness { get; set; } = 0.5f;
+
+    public bool CastShadows { get; set; } = true;
+
+    public bool ReceiveShadows { get; set; } = true;
 }

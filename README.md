@@ -100,7 +100,7 @@ A component whose type no longer exists is kept as is and saved back unchanged.
 | Shift                    | Move 3× faster            |
 | Mouse wheel              | Change fly speed          |
 
-**Effects** (top right of the viewport) shows or hides the skybox, post-processing and the grid.
+**Effects** (top right of the viewport) shows or hides the skybox, shadows, post-processing and the grid.
 
 ### Rendering
 
@@ -108,7 +108,12 @@ The viewport renders like URP: scenes are lit and drawn in HDR, then post-proces
 
 - **Light** component: directional, point or spot. The first directional light is the sun (it also
   places the sun in the sky); up to 8 point / spot lights light each object. Lights shine along the
-  entity's forward axis (-Z). No shadows yet.
+  entity's forward axis (-Z).
+- **Shadows**, like URP: set a light's **Shadows** to Hard or Soft (and its strength). The sun uses
+  cascaded shadow maps (1 to 4 cascades, up to Max Distance, fading out at the end); spot lights get
+  one shadow map and point lights six (cube faces), sharing an atlas of 16 slots. Mesh Renderers can
+  turn off **Cast Shadows** / **Receive Shadows**. Resolutions, distance, cascade splits, depth / normal
+  bias and soft shadow quality are in **Edit → Project Settings** (saved in `ProjectSettings.json`).
 - **Mesh Renderer**: base color, metallic and smoothness, shaded with URP Lit's BRDF.
 - **Procedural Skybox** component: Unity's Skybox/Procedural (Rayleigh and Mie scattering), with the
   same settings and defaults (sun disk, sun size and convergence, atmosphere thickness, sky tint, ground
@@ -119,7 +124,7 @@ The viewport renders like URP: scenes are lit and drawn in HDR, then post-proces
   Depth Of Field (Gaussian and Bokeh), Film Grain, Lens Distortion, Lift Gamma Gain, Motion Blur
   (camera), Panini Projection, Shadows Midtones Highlights, Split Toning, Tonemapping (Neutral, ACES),
   Vignette, White Balance. Settings and defaults follow URP.
-- New scenes start like a URP scene: a Directional Light, an Environment (the sky) and a Global Volume
+- New scenes start like a URP scene: a Directional Light with soft shadows, an Environment (the sky) and a Global Volume
   with ACES tonemapping, a little bloom and a vignette.
 - Color Lookup takes a PNG strip of N tiles of N×N (e.g. 1024×32); `Samples/Sandbox/Assets/Textures/NeutralLUT32.png`
   is a neutral one to grade in an image editor.

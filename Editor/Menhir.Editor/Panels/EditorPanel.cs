@@ -1,3 +1,4 @@
+using System.Numerics;
 using ImGuiNET;
 
 namespace Menhir.Editor.Panels;
@@ -18,6 +19,12 @@ public abstract class EditorPanel
 
     public bool IsOpen { get; set; } = true;
 
+    /// <summary>Open on first run and after Window > Reset Layout.</summary>
+    public virtual bool OpenByDefault => true;
+
+    /// <summary>Size the first time the window appears (panels outside the default layout float).</summary>
+    protected virtual Vector2? DefaultSize => null;
+
     protected virtual ImGuiWindowFlags WindowFlags => ImGuiWindowFlags.None;
 
     public void Draw()
@@ -29,6 +36,8 @@ public abstract class EditorPanel
         }
 
         bool open = true;
+        if (DefaultSize is { } size)
+            ImGui.SetNextWindowSize(size, ImGuiCond.FirstUseEver);
         PushWindowStyle();
         bool visible = ImGui.Begin($"{Icon}  {Title}{WindowId}", ref open, WindowFlags);
         PopWindowStyle();

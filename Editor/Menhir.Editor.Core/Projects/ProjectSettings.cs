@@ -14,4 +14,6 @@ public sealed class ProjectSettings
 
     /// <summary>Set when the project is shared through a remote.</summary>
     public ProjectRemoteSettings? Remote { get; set; }
+
+    public RenderingSettings Rendering { get; set; } = new();
 }

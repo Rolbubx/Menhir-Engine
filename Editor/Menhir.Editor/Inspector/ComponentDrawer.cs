@@ -33,19 +33,23 @@ public static class ComponentDrawer
     }
 
     /// <param name="assets">The project's assets, for texture fields (null: none to pick from).</param>
-    public static void Draw(Component component, Action<ICommand> execute, AssetDatabase? assets)
+    public static void Draw(Component component, Action<ICommand> execute, AssetDatabase? assets) =>
+        Draw(component, (property, value) => execute(new SetPropertyCommand(component, property, value)), assets);
+
+    /// <summary>Draws the properties of any object; <paramref name="set"/> applies an edit.</summary>
+    public static void Draw(object target, Action<PropertyInfo, object?> set, AssetDatabase? assets)
     {
         if (!PropertyTable.Begin("##properties"))
             return;
 
-        foreach (PropertyInfo property in InspectableProperties.Get(component.GetType()))
+        foreach (PropertyInfo property in InspectableProperties.Get(target.GetType()))
         {
             PropertyTable.Row(InspectableProperties.NicifyName(property.Name),
                 property.GetCustomAttribute<TooltipAttribute>()?.Text);
             ImGui.PushID(property.Name);
-            object? value = property.GetValue(component);
+            object? value = property.GetValue(target);
             if (DrawValue(property, value, assets, out object? newValue))
-                execute(new SetPropertyCommand(component, property, newValue));
+                set(property, newValue);
             ImGui.PopID();
         }
 

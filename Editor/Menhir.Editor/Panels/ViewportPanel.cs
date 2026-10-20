@@ -1,5 +1,6 @@
 using System.Numerics;
 using ImGuiNET;
+using Menhir.Editor.Projects;
 using Menhir.Editor.Rendering;
 using Menhir.Editor.UI;
 
@@ -24,6 +25,7 @@ public sealed class ViewportPanel : EditorPanel, IDisposable
     private readonly Action<bool> _setCursorCaptured;
     private readonly EditorCamera _camera = new();
     private readonly ViewportOptions _options = new();
+    private static readonly RenderingSettings DefaultRendering = new();
 
     private bool _flying;
     private float _moveSpeed = 5f;
@@ -62,7 +64,7 @@ public sealed class ViewportPanel : EditorPanel, IDisposable
         Vector2 pixelScale = ImGui.GetIO().DisplayFramebufferScale;
         _target.Resize((int)(size.X * pixelScale.X), (int)(size.Y * pixelScale.Y));
         _sceneRenderer.Render(_context.ActiveScene, _target, _camera.GetViewParams(size.X / size.Y), _options,
-            _context.SelectedEntityId);
+            _context.Project?.Settings.Rendering ?? DefaultRendering, _context.SelectedEntityId);
 
         // GL textures start at the bottom-left, ImGui images at the top-left: flip V.
         ImGui.Image(_target.ColorTexture, size, new Vector2(0, 1), new Vector2(1, 0));
@@ -90,9 +92,11 @@ public sealed class ViewportPanel : EditorPanel, IDisposable
 
         if (!ImGui.BeginPopup("##viewportEffects"))
             return;
-        bool skybox = _options.Skybox, post = _options.PostProcessing, grid = _options.Grid;
+        bool skybox = _options.Skybox, post = _options.PostProcessing, grid = _options.Grid, shadows = _options.Shadows;
         if (ImGui.Checkbox("Skybox", ref skybox))
             _options.Skybox = skybox;
+        if (ImGui.Checkbox("Shadows", ref shadows))
+            _options.Shadows = shadows;
         if (ImGui.Checkbox("Post-processing", ref post))
             _options.PostProcessing = post;
         if (ImGui.Checkbox("Grid", ref grid))

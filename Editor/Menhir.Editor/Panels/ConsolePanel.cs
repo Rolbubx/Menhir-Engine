@@ -13,10 +13,6 @@ namespace Menhir.Editor.Panels;
 /// </summary>
 public sealed class ConsolePanel : EditorPanel
 {
-    private static readonly Vector4 InfoColor = new(0.75f, 0.75f, 0.75f, 1f);
-    private static readonly Vector4 WarningColor = new(0.95f, 0.75f, 0.25f, 1f);
-    private static readonly Vector4 ErrorColor = new(0.95f, 0.35f, 0.3f, 1f);
-
     private const float MinPaneHeight = 40f;
     private const float SplitterThickness = 6f;
 
@@ -42,7 +38,16 @@ public sealed class ConsolePanel : EditorPanel
 
     public override string Title => "Console";
 
+    public override string Icon => Icons.Console;
+
     protected override void DrawContent()
+    {
+        EditorTheme.PushSelectionColors();
+        DrawPanel();
+        EditorTheme.PopSelectionColors();
+    }
+
+    private void DrawPanel()
     {
         RebuildRowsIfNeeded();
         DrawToolbar();
@@ -73,85 +78,64 @@ public sealed class ConsolePanel : EditorPanel
 
     private void DrawToolbar()
     {
-        if (ImGui.Button("Clear"))
+        if (ImGui.Button($"{Icons.Trash}  Clear"))
         {
             _log.Clear();
             _selected = null;
         }
         ImGui.SameLine();
         bool collapse = _filter.Collapse;
-        if (ToggleButton("Collapse", ref collapse))
+        if (EditorTheme.ToggleButton($"{Icons.Collapse}  Collapse", ref collapse))
             _filter.Collapse = collapse;
         ImGui.SameLine();
 
         // Level toggles are right-aligned; the search field takes the space in between.
         float spacing = ImGui.GetStyle().ItemSpacing.X;
-        float togglesWidth = LevelToggleWidth(_counts.Info) + LevelToggleWidth(_counts.Warnings)
-                             + LevelToggleWidth(_counts.Errors) + 2 * spacing;
+        float togglesWidth = LevelToggleWidth(LogLevel.Info, _counts.Info) +
+                             LevelToggleWidth(LogLevel.Warning, _counts.Warnings) +
+                             LevelToggleWidth(LogLevel.Error, _counts.Errors) + 2 * spacing;
 
         string search = _filter.Search;
         ImGui.SetNextItemWidth(Math.Max(80f, ImGui.GetContentRegionAvail().X - togglesWidth - spacing));
-        if (ImGui.InputTextWithHint("##search", "Search", ref search, 256))
+        if (ImGui.InputTextWithHint("##search", $"{Icons.Search}  Search", ref search, 256))
             _filter.Search = search;
 
         ImGui.SameLine();
         ImGui.SetCursorPosX(Math.Max(ImGui.GetCursorPosX(), ImGui.GetWindowContentRegionMax().X - togglesWidth));
         bool show = _filter.ShowInfo;
-        if (LevelToggle("##info", _counts.Info, InfoColor, ref show, "Show messages"))
+        if (LevelToggle(LogLevel.Info, _counts.Info, ref show, "Show messages"))
             _filter.ShowInfo = show;
         ImGui.SameLine();
         show = _filter.ShowWarnings;
-        if (LevelToggle("##warnings", _counts.Warnings, WarningColor, ref show, "Show warnings"))
+        if (LevelToggle(LogLevel.Warning, _counts.Warnings, ref show, "Show warnings"))
             _filter.ShowWarnings = show;
         ImGui.SameLine();
         show = _filter.ShowErrors;
-        if (LevelToggle("##errors", _counts.Errors, ErrorColor, ref show, "Show errors"))
+        if (LevelToggle(LogLevel.Error, _counts.Errors, ref show, "Show errors"))
             _filter.ShowErrors = show;
     }
 
-    private static bool ToggleButton(string label, ref bool value, Vector2 size = default)
-    {
-        if (value)
-            ImGui.PushStyleColor(ImGuiCol.Button, ImGui.GetStyle().Colors[(int)ImGuiCol.ButtonActive]);
-        bool clicked = ImGui.Button(label, size);
-        if (value)
-            ImGui.PopStyleColor();
-        if (clicked)
-            value = !value;
-        return clicked;
-    }
-
-    private static float IconSize => ImGui.GetTextLineHeight() * 0.55f;
-
-    private static float LevelToggleWidth(int count) =>
-        IconSize + 4f + ImGui.CalcTextSize(count.ToString()).X + ImGui.GetStyle().FramePadding.X * 2;
+    private static float LevelToggleWidth(LogLevel level, int count) =>
+        ImGui.CalcTextSize(LogStyle.Icon(level)).X + 4f + ImGui.CalcTextSize(count.ToString()).X +
+        ImGui.GetStyle().FramePadding.X * 2;
 
     /// <summary>A toggle button showing a level's icon and message count.</summary>
-    private static bool LevelToggle(string id, int count, Vector4 color, ref bool value, string tooltip)
+    private static bool LevelToggle(LogLevel level, int count, ref bool value, string tooltip)
     {
         Vector2 start = ImGui.GetCursorScreenPos();
-        float height = ImGui.GetFrameHeight();
-        bool clicked = ToggleButton(id, ref value, new Vector2(LevelToggleWidth(count), height));
+        bool clicked = EditorTheme.ToggleButton($"##{level}", ref value, new Vector2(LevelToggleWidth(level, count), ImGui.GetFrameHeight()));
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(tooltip);
 
         ImDrawListPtr drawList = ImGui.GetWindowDrawList();
-        float x = start.X + ImGui.GetStyle().FramePadding.X;
-        DrawLevelIcon(drawList, new Vector2(x + IconSize / 2, start.Y + height / 2), value ? color : color with { W = 0.35f });
-        uint textColor = ImGui.GetColorU32(value ? ImGuiCol.Text : ImGuiCol.TextDisabled);
-        drawList.AddText(new Vector2(x + IconSize + 4f, start.Y + ImGui.GetStyle().FramePadding.Y), textColor, count.ToString());
+        Vector2 pos = start + ImGui.GetStyle().FramePadding;
+        Vector4 color = LogStyle.Color(level);
+        string icon = LogStyle.Icon(level);
+        drawList.AddText(pos, ImGui.GetColorU32(value ? color : color with { W = 0.4f }), icon);
+        pos.X += ImGui.CalcTextSize(icon).X + 4f;
+        drawList.AddText(pos, ImGui.GetColorU32(value ? ImGuiCol.Text : ImGuiCol.TextDisabled), count.ToString());
         return clicked;
     }
-
-    private static void DrawLevelIcon(ImDrawListPtr drawList, Vector2 center, Vector4 color) =>
-        drawList.AddCircleFilled(center, IconSize / 2, ImGui.GetColorU32(color));
-
-    private static Vector4 ColorOf(LogLevel level) => level switch
-    {
-        LogLevel.Warning => WarningColor,
-        LogLevel.Error => ErrorColor,
-        _ => InfoColor,
-    };
 
     private unsafe void DrawList(float height)
     {
@@ -162,7 +146,7 @@ public sealed class ConsolePanel : EditorPanel
         }
 
         ImDrawListPtr drawList = ImGui.GetWindowDrawList();
-        float rowHeight = ImGui.GetTextLineHeightWithSpacing();
+        float rowHeight = ImGui.GetTextLineHeight() + 8f;
         float timeWidth = ImGui.CalcTextSize("00:00:00 ").X;
         uint stripeColor = ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.025f));
         uint timeColor = ImGui.GetColorU32(ImGuiCol.TextDisabled);
@@ -195,8 +179,8 @@ public sealed class ConsolePanel : EditorPanel
 
                 float textY = start.Y + (rowHeight - ImGui.GetStyle().ItemSpacing.Y - ImGui.GetTextLineHeight()) / 2;
                 float x = start.X + 4f;
-                DrawLevelIcon(drawList, new Vector2(x + IconSize / 2, textY + ImGui.GetTextLineHeight() / 2), ColorOf(entry.Level));
-                x += IconSize + 6f;
+                drawList.AddText(new Vector2(x, textY), ImGui.GetColorU32(LogStyle.Color(entry.Level)), LogStyle.Icon(entry.Level));
+                x += ImGui.CalcTextSize(LogStyle.Icon(entry.Level)).X + 6f;
                 drawList.AddText(new Vector2(x, textY), timeColor, entry.Time.ToString("HH:mm:ss"));
                 x += timeWidth;
                 drawList.AddText(new Vector2(x, textY), textColor, entry.Summary);
@@ -266,19 +250,19 @@ public sealed class ConsolePanel : EditorPanel
             return;
         }
 
-        ImGui.TextColored(ColorOf(entry.Level), entry.Level.ToString());
+        ImGui.TextColored(LogStyle.Color(entry.Level), $"{LogStyle.Icon(entry.Level)}  {entry.Level}");
         ImGui.SameLine();
         ImGui.TextDisabled(entry.Time.ToString("yyyy-MM-dd HH:mm:ss.fff"));
         ImGui.SameLine();
-        if (ImGui.SmallButton("Copy"))
+        if (ImGui.SmallButton($"{Icons.Copy}  Copy"))
             ImGui.SetClipboardText(FullText(entry));
 
         // A read-only text field, so the text can be selected and copied in parts.
         string text = FullText(entry);
-        ImGui.PushStyleColor(ImGuiCol.FrameBg, ImGui.GetStyle().Colors[(int)ImGuiCol.ChildBg]);
+        ImGui.PushFont(EditorFonts.Mono);
         ImGui.InputTextMultiline("##details", ref text, (uint)Encoding.UTF8.GetByteCount(text) + 1,
             ImGui.GetContentRegionAvail(), ImGuiInputTextFlags.ReadOnly);
-        ImGui.PopStyleColor();
+        ImGui.PopFont();
     }
 
     private static string FullText(LogEntry entry) =>

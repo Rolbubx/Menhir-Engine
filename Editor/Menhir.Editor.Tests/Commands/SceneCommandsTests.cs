@@ -120,6 +120,39 @@ public class SceneCommandsTests
         Assert.Equal(original, renderer.Color);
     }
 
+    [Fact]
+    public void AddComponent_UndoRemovesIt()
+    {
+        Entity entity = _scene.CreateEntity("E");
+        var renderer = new MeshRenderer();
+
+        _history.Execute(new AddComponentCommand(entity, renderer));
+        Assert.Same(renderer, entity.Components.Single());
+        Assert.Equal("Add Mesh Renderer", _history.UndoName);
+
+        _history.Undo();
+        Assert.Empty(entity.Components);
+        _history.Redo();
+        Assert.Same(renderer, entity.Components.Single());
+    }
+
+    [Fact]
+    public void RemoveComponent_UndoRestoresThePosition()
+    {
+        Entity entity = _scene.CreateEntity("E");
+        var first = new MeshRenderer();
+        var middle = new MissingComponent("Rigidbody", new System.Text.Json.Nodes.JsonObject());
+        var last = new MeshRenderer();
+        entity.Components.AddRange([first, middle, last]);
+
+        _history.Execute(new RemoveComponentCommand(entity, middle));
+        Assert.Equal([first, last], entity.Components);
+        Assert.Equal("Remove Rigidbody", _history.UndoName);
+
+        _history.Undo();
+        Assert.Equal([first, middle, last], entity.Components);
+    }
+
     private sealed class Vector3Comparer : IEqualityComparer<Vector3>
     {
         public bool Equals(Vector3 a, Vector3 b) => Vector3.Distance(a, b) < 1e-4f;

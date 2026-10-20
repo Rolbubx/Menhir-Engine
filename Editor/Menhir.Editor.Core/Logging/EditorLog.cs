@@ -30,6 +30,16 @@ public sealed class EditorLog
         }
     }
 
+    /// <summary>The most recent message, or null when the log is empty.</summary>
+    public LogEntry? Last
+    {
+        get
+        {
+            lock (_lock)
+                return _entries.Count > 0 ? _entries[^1] : null;
+        }
+    }
+
     public LogEntry Add(LogLevel level, string message, string? details = null)
     {
         lock (_lock)

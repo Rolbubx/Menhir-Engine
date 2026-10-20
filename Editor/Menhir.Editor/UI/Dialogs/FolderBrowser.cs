@@ -47,7 +47,7 @@ public sealed class FolderBrowser
     {
         string? activated = null;
 
-        if (ImGui.Button("Up") && Directory.GetParent(_currentPath) is { } parent)
+        if (ImGui.Button($"{Icons.ArrowUp}##up") && Directory.GetParent(_currentPath) is { } parent)
             Navigate(parent.FullName);
         ImGui.SameLine();
         if (OperatingSystem.IsWindows())
@@ -64,7 +64,8 @@ public sealed class FolderBrowser
             foreach (string folder in _folders)
             {
                 bool isProject = Project.IsProjectFolder(folder);
-                string label = isProject ? $"{Path.GetFileName(folder)}   (Menhir project)" : Path.GetFileName(folder);
+                string icon = isProject ? Icons.Project : Icons.Folder;
+                string label = isProject ? $"{icon}  {Path.GetFileName(folder)}   (Menhir project)" : $"{icon}  {Path.GetFileName(folder)}";
                 if (ImGui.Selectable($"{label}##{folder}", folder == SelectedFolder, ImGuiSelectableFlags.AllowDoubleClick))
                 {
                     SelectedFolder = folder;
@@ -98,6 +99,6 @@ public sealed class FolderBrowser
     private static void ErrorTextLine(string? error)
     {
         if (error != null)
-            ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f), error);
+            ImGui.TextColored(EditorTheme.Error, error);
     }
 }

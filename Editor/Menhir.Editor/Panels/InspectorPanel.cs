@@ -6,6 +6,7 @@ using Menhir.Editor.Inspector;
 using Menhir.Editor.Inspection;
 using Menhir.Editor.Mathematics;
 using Menhir.Editor.Scenes;
+using Menhir.Editor.UI;
 
 namespace Menhir.Editor.Panels;
 
@@ -17,6 +18,11 @@ public sealed class InspectorPanel : EditorPanel
 {
     private readonly EditorContext _context;
 
+    // Scene changes from menus are applied after the components are drawn, so the list is not
+    // modified while it is being iterated.
+    private Action? _pendingChange;
+
+    private string _componentSearch = "";
     private string _nameBuffer = "";
     private long _editingNameId;
 
@@ -33,6 +39,8 @@ public sealed class InspectorPanel : EditorPanel
 
     public override string Title => "Inspector";
 
+    public override string Icon => Icons.Inspector;
+
     protected override void DrawContent()
     {
         if (_context.SelectedEntity is { } entity)
@@ -41,6 +49,9 @@ public sealed class InspectorPanel : EditorPanel
             DrawAsset(asset);
         else
             Placeholder("Nothing selected.");
+
+        _pendingChange?.Invoke();
+        _pendingChange = null;
     }
 
     private void DrawEntity(Entity entity)
@@ -48,39 +59,115 @@ public sealed class InspectorPanel : EditorPanel
         ImGui.PushID($"entity{entity.LocalId}");
 
         DrawName(entity);
-        ImGui.Spacing();
 
-        if (ImGui.CollapsingHeader("Transform", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ComponentHeader.Draw("transform", Icons.Transform, EditorTheme.Text, "Transform", menuId: null))
             DrawTransform(entity);
 
         for (int i = 0; i < entity.Components.Count; i++)
         {
             Component component = entity.Components[i];
-            string title = InspectableProperties.NicifyName(component.GetType().Name);
             ImGui.PushID(i);
             if (component is MissingComponent missing)
             {
-                if (ImGui.CollapsingHeader($"Missing: {missing.TypeName}", ImGuiTreeNodeFlags.DefaultOpen))
-                    Placeholder($"The component type '{missing.TypeName}' was not found. Its data is kept and saved back unchanged.");
+                if (ComponentHeader.Draw("component", Icons.MissingComponent, EditorTheme.Warning,
+                        $"{missing.TypeName} (Missing)", "##componentMenu"))
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.Warning);
+                    ImGui.TextWrapped($"The component type '{missing.TypeName}' was not found. " +
+                                      "Its data is kept and saved back unchanged.");
+                    ImGui.PopStyleColor();
+                }
             }
-            else if (ImGui.CollapsingHeader(title, ImGuiTreeNodeFlags.DefaultOpen))
+            else
             {
-                ComponentDrawer.Draw(component, _context.Execute);
+                Type type = component.GetType();
+                if (ComponentHeader.Draw("component", ComponentDrawer.IconFor(type), EditorTheme.Text,
+                        InspectableProperties.NicifyName(type.Name), "##componentMenu"))
+                {
+                    ComponentDrawer.Draw(component, _context.Execute);
+                }
             }
+            DrawComponentMenu(entity, component);
             ImGui.PopID();
         }
 
+        DrawAddComponent(entity);
         ImGui.PopID();
+    }
+
+    private void DrawComponentMenu(Entity entity, Component component)
+    {
+        if (!ImGui.BeginPopup("##componentMenu"))
+            return;
+        if (ImGui.MenuItem($"{Icons.Trash}  Remove Component"))
+            _pendingChange = () => _context.Execute(new RemoveComponentCommand(entity, component));
+        ImGui.EndPopup();
+    }
+
+    /// <summary>The wide button under the components, with a searchable list of component types.</summary>
+    private void DrawAddComponent(Entity entity)
+    {
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        float width = MathF.Min(ImGui.GetContentRegionAvail().X, ImGui.GetFontSize() * 16);
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (ImGui.GetContentRegionAvail().X - width) / 2);
+        Vector2 buttonPos = ImGui.GetCursorScreenPos();
+        if (ImGui.Button("Add Component", new Vector2(width, ImGui.GetFrameHeight() + 4)))
+        {
+            _componentSearch = "";
+            ImGui.OpenPopup("##addComponent");
+        }
+
+        ImGui.SetNextWindowPos(buttonPos + new Vector2(0, ImGui.GetFrameHeight() + 6));
+        ImGui.SetNextWindowSize(new Vector2(width, 0));
+        if (!ImGui.BeginPopup("##addComponent"))
+            return;
+
+        if (ImGui.IsWindowAppearing())
+            ImGui.SetKeyboardFocusHere();
+        ImGui.SetNextItemWidth(-float.Epsilon);
+        ImGui.InputTextWithHint("##search", $"{Icons.Search}  Search", ref _componentSearch, 64);
+        ImGui.Separator();
+
+        IEnumerable<Type> types = ComponentTypes.All
+            .Where(t => InspectableProperties.NicifyName(t.Name).Contains(_componentSearch.Trim(), StringComparison.OrdinalIgnoreCase))
+            .OrderBy(t => t.Name, StringComparer.Ordinal);
+        bool any = false;
+        foreach (Type type in types)
+        {
+            any = true;
+            // One of each kind per entity, for now.
+            bool present = entity.Components.Any(c => c.GetType() == type);
+            if (ImGui.Selectable($"{ComponentDrawer.IconFor(type)}  {InspectableProperties.NicifyName(type.Name)}", false,
+                    present ? ImGuiSelectableFlags.Disabled : ImGuiSelectableFlags.None))
+            {
+                Component component = ComponentTypes.Create(ComponentTypes.GetName(type))!;
+                _pendingChange = () => _context.Execute(new AddComponentCommand(entity, component));
+            }
+        }
+        if (!any)
+            ImGui.TextDisabled("No component matches.");
+        ImGui.EndPopup();
     }
 
     private static void DrawAsset(AssetEntry asset)
     {
+        // Header: big tinted icon, name and kind.
+        Vector2 start = ImGui.GetCursorPos();
+        EditorFonts.LargeIcon(AssetIcons.Icon(asset), AssetIcons.Color(asset));
+        Vector2 end = ImGui.GetCursorPos();
+        float textX = start.X + EditorFonts.LargeIconSize + 10;
+        ImGui.SetCursorPos(new Vector2(textX, start.Y + 4));
+        ImGui.PushFont(EditorFonts.Bold);
         ImGui.TextUnformatted(asset.Name);
-        ImGui.SameLine();
-        ImGui.TextDisabled(asset.IsFolder ? "Folder" : asset.Meta.Importer);
-        ImGui.Spacing();
+        ImGui.PopFont();
+        ImGui.SetCursorPosX(textX);
+        ImGui.TextDisabled(asset.IsFolder ? "Folder" : $"{asset.Meta.Importer} asset");
+        ImGui.SetCursorPos(new Vector2(start.X, MathF.Max(end.Y, ImGui.GetCursorPosY())));
 
-        if (ImGui.CollapsingHeader("Asset", ImGuiTreeNodeFlags.DefaultOpen) && PropertyTable.Begin("##asset"))
+        if (ComponentHeader.Draw("asset", Icons.Info, EditorTheme.Text, "Asset", menuId: null) && PropertyTable.Begin("##asset"))
         {
             PropertyTable.Row("Path");
             ReadOnlyField("##path", asset.Path);
@@ -91,7 +178,7 @@ public sealed class InspectorPanel : EditorPanel
             PropertyTable.End();
         }
 
-        if (!asset.IsFolder && ImGui.CollapsingHeader("Import Settings", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!asset.IsFolder && ComponentHeader.Draw("import", Icons.Component, EditorTheme.Text, "Import Settings", menuId: null))
         {
             if (asset.Meta.Settings.Count > 0)
                 ImGui.TextUnformatted(asset.Meta.Settings.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
@@ -102,7 +189,9 @@ public sealed class InspectorPanel : EditorPanel
     /// <summary>Text the user can select and copy, but not edit.</summary>
     private static void ReadOnlyField(string id, string text)
     {
+        ImGui.PushFont(EditorFonts.Mono);
         ImGui.InputText(id, ref text, (uint)text.Length + 1, ImGuiInputTextFlags.ReadOnly);
+        ImGui.PopFont();
     }
 
     /// <summary>Edited in a buffer and applied when the field loses focus, so an empty name never shows up.</summary>
@@ -111,6 +200,10 @@ public sealed class InspectorPanel : EditorPanel
         if (_editingNameId != entity.LocalId)
             _nameBuffer = entity.Name;
 
+        ImGui.Spacing();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted(Icons.Entity);
+        ImGui.SameLine();
         string id = $"#{entity.LocalId}";
         ImGui.SetNextItemWidth(-(ImGui.CalcTextSize(id).X + ImGui.GetStyle().ItemSpacing.X));
         ImGui.InputText("##name", ref _nameBuffer, 256);
@@ -138,7 +231,7 @@ public sealed class InspectorPanel : EditorPanel
 
         Vector3 position = transform.Position;
         PropertyTable.Row("Position");
-        if (ImGui.DragFloat3("##position", ref position, 0.05f, 0, 0, "%.3f"))
+        if (PropertyTable.Vector("##position", ref position, 0.05f))
             SetTransform(entity, TransformState.From(transform) with { Position = position });
 
         if (entity.LocalId != _eulerEntityId || transform.Rotation != _eulerSource)
@@ -149,7 +242,7 @@ public sealed class InspectorPanel : EditorPanel
         }
         Vector3 euler = _euler;
         PropertyTable.Row("Rotation");
-        if (ImGui.DragFloat3("##rotation", ref euler, 0.5f, 0, 0, "%.2f°"))
+        if (PropertyTable.Vector("##rotation", ref euler, 0.5f, "%.2f°"))
         {
             SetTransform(entity, TransformState.From(transform) with { Rotation = EulerAngles.ToQuaternion(euler) });
             _eulerSource = transform.Rotation;
@@ -158,7 +251,7 @@ public sealed class InspectorPanel : EditorPanel
 
         Vector3 scale = transform.Scale;
         PropertyTable.Row("Scale");
-        if (ImGui.DragFloat3("##scale", ref scale, 0.01f, 0, 0, "%.3f"))
+        if (PropertyTable.Vector("##scale", ref scale, 0.01f))
             SetTransform(entity, TransformState.From(transform) with { Scale = scale });
 
         PropertyTable.End();

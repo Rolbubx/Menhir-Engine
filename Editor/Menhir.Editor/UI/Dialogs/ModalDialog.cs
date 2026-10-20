@@ -52,14 +52,18 @@ public abstract class ModalDialog
     protected static void ErrorText(string? error)
     {
         if (error != null)
-            ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f), error);
+            ImGui.TextColored(EditorTheme.Error, error);
     }
 
-    /// <summary>A button that is greyed out and does nothing when <paramref name="enabled"/> is false.</summary>
-    protected static bool Button(string label, bool enabled = true)
+    /// <summary>
+    /// A button that is greyed out and does nothing when <paramref name="enabled"/> is false.
+    /// The <paramref name="primary"/> one (the dialog's main action) is blue.
+    /// </summary>
+    protected static bool Button(string label, bool enabled = true, bool primary = false)
     {
         ImGui.BeginDisabled(!enabled);
-        bool pressed = ImGui.Button(label);
+        Vector2 size = new(MathF.Max(ImGui.CalcTextSize(label, true).X + ImGui.GetStyle().FramePadding.X * 2, ImGui.GetFontSize() * 5.5f), 0);
+        bool pressed = primary ? EditorTheme.PrimaryButton(label, size) : ImGui.Button(label, size);
         ImGui.EndDisabled();
         return pressed && enabled;
     }

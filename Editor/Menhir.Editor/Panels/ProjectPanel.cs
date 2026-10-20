@@ -4,6 +4,7 @@ using ImGuiNET;
 using Menhir.Editor.Assets;
 using Menhir.Editor.Logging;
 using Menhir.Editor.Projects;
+using Menhir.Editor.UI;
 
 namespace Menhir.Editor.Panels;
 
@@ -37,6 +38,10 @@ public sealed class ProjectPanel : EditorPanel
     private string? _deletePath;
 
     private string? _error;
+    private string _search = "";
+
+    /// <summary>Icons (true) or a list with a Type column (false). Saved with the editor preferences.</summary>
+    public bool GridView { get; set; } = true;
 
     public ProjectPanel(EditorContext context, Action<AssetEntry> openScene)
     {
@@ -46,14 +51,15 @@ public sealed class ProjectPanel : EditorPanel
 
     public override string Title => "Project";
 
+    public override string Icon => Icons.Project;
+
     private AssetDatabase? Assets => _context.Project?.Assets;
 
     protected override void DrawContent()
     {
         if (_context.Project is not { } project)
         {
-            Placeholder("No project open. Start the editor with --project <folder> " +
-                        "(File > Open Project arrives in Phase 6).");
+            Placeholder("No project open. Use File > Open Project or File > New Project.");
             return;
         }
 
@@ -72,7 +78,14 @@ public sealed class ProjectPanel : EditorPanel
 
             ImGui.TableSetColumnIndex(0);
             if (ImGui.BeginChild("##folders"))
+            {
+                EditorTheme.PushSelectionColors();
+                ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, ImGui.GetStyle().ItemSpacing with { Y = 0 });
+                ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, ImGui.GetStyle().FramePadding with { Y = 2 });
                 DrawFolderNode(AssetPaths.Root);
+                ImGui.PopStyleVar(2);
+                EditorTheme.PopSelectionColors();
+            }
             ImGui.EndChild();
 
             ImGui.TableSetColumnIndex(1);
@@ -94,48 +107,66 @@ public sealed class ProjectPanel : EditorPanel
 
     private void DrawToolbar()
     {
-        if (ImGui.Button("+"))
+        if (ImGui.Button($"{Icons.Plus}##create"))
             ImGui.OpenPopup("CreateAsset");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Create");
         if (ImGui.BeginPopup("CreateAsset"))
         {
             DrawCreateMenuItems();
             ImGui.EndPopup();
         }
         ImGui.SameLine();
-        if (ImGui.Button("Refresh"))
+        if (EditorTheme.FlatButton($"{Icons.Refresh}##refresh"))
             _context.RefreshAssets();
-        ImGui.SameLine();
-        DrawBreadcrumbs();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Refresh (look for files changed on disk)");
 
         if (_error != null)
         {
             ImGui.SameLine();
-            ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f), _error);
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextColored(EditorTheme.Error, $"{Icons.Error}  {_error}");
             if (ImGui.IsItemClicked())
                 _error = null;
         }
+
+        // Search and view mode on the right.
+        float toggleWidth = ImGui.GetFrameHeight();
+        float searchWidth = MathF.Min(ImGui.GetFontSize() * 14, ImGui.GetContentRegionAvail().X * 0.5f);
+        ImGui.SameLine(ImGui.GetContentRegionMax().X - searchWidth - toggleWidth - ImGui.GetStyle().ItemSpacing.X);
+        ImGui.SetNextItemWidth(searchWidth);
+        ImGui.InputTextWithHint("##search", $"{Icons.Search}  Search", ref _search, 128);
+        ImGui.SameLine();
+        if (EditorTheme.FlatButton($"{(GridView ? Icons.ListView : Icons.GridView)}##view", new Vector2(toggleWidth, 0)))
+            GridView = !GridView;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(GridView ? "Show as a list" : "Show as icons");
     }
 
-    /// <summary>"Assets > Textures > Rock": each part opens that folder and accepts drops.</summary>
+    /// <summary>"Assets › Textures › Rock": each part opens that folder and accepts drops.</summary>
     private void DrawBreadcrumbs()
     {
         string[] parts = _currentFolder.Split('/');
         string path = "";
-        ImGui.PushStyleColor(ImGuiCol.Button, Vector4.Zero);
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, ImGui.GetStyle().FramePadding with { X = 3 });
         for (int i = 0; i < parts.Length; i++)
         {
             path = i == 0 ? parts[0] : AssetPaths.Combine(path, parts[i]);
             if (i > 0)
             {
                 ImGui.SameLine(0, 0);
-                ImGui.TextDisabled(">");
+                ImGui.AlignTextToFramePadding();
+                ImGui.TextDisabled(Icons.ChevronRight);
                 ImGui.SameLine(0, 0);
             }
-            if (ImGui.Button($"{parts[i]}##crumb{i}"))
+            ImGui.PushFont(i == parts.Length - 1 ? EditorFonts.Bold : ImGui.GetFont());
+            if (EditorTheme.FlatButton($"{parts[i]}##crumb{i}"))
                 Navigate(path);
+            ImGui.PopFont();
             DrawDropTarget(path);
         }
-        ImGui.PopStyleColor();
+        ImGui.PopStyleVar();
     }
 
     private void DrawFolderNode(string folderPath)
@@ -144,7 +175,7 @@ public sealed class ProjectPanel : EditorPanel
         bool hasSubfolders = children.Any(c => c.IsFolder);
 
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.OpenOnDoubleClick |
-                                   ImGuiTreeNodeFlags.SpanAvailWidth;
+                                   ImGuiTreeNodeFlags.SpanAvailWidth | ImGuiTreeNodeFlags.FramePadding;
         if (folderPath == AssetPaths.Root)
             flags |= ImGuiTreeNodeFlags.DefaultOpen;
         if (!hasSubfolders)
@@ -156,7 +187,11 @@ public sealed class ProjectPanel : EditorPanel
         if (_revealCurrentFolder && folderPath != _currentFolder && AssetPaths.IsSameOrInside(_currentFolder, folderPath))
             ImGui.SetNextItemOpen(true);
 
-        bool open = ImGui.TreeNodeEx($"{AssetPaths.GetName(folderPath)}##{folderPath}", flags);
+        // The icon is drawn over the label's leading spaces, so it can have its own color.
+        Vector2 labelPos = ImGui.GetCursorScreenPos() + new Vector2(ImGui.GetTreeNodeToLabelSpacing(), ImGui.GetStyle().FramePadding.Y);
+        bool open = ImGui.TreeNodeEx($"     {AssetPaths.GetName(folderPath)}##{folderPath}", flags);
+        ImGui.GetWindowDrawList().AddText(labelPos, ImGui.GetColorU32(AssetIcons.Color(AssetImporters.Folder)),
+            open && hasSubfolders ? Icons.FolderOpen : Icons.Folder);
         if (ImGui.IsItemClicked(ImGuiMouseButton.Left) && !ImGui.IsItemToggledOpen())
             _currentFolder = folderPath;
         if (folderPath != AssetPaths.Root)
@@ -186,81 +221,163 @@ public sealed class ProjectPanel : EditorPanel
 
     private void DrawFolderContent()
     {
-        IReadOnlyList<AssetEntry> entries = Assets!.GetChildren(_currentFolder);
-
-        ImGuiTableFlags flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable;
-        if (ImGui.BeginTable("##entries", 2, flags))
+        string search = _search.Trim();
+        IReadOnlyList<AssetEntry> entries;
+        if (search.Length > 0)
         {
-            ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, ImGui.GetFontSize() * 6);
-            foreach (AssetEntry entry in entries)
-                DrawEntryRow(entry);
-            ImGui.EndTable();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextDisabled($"Search results for '{search}' in Assets");
+            entries = Assets!.GetAllEntries()
+                .Where(e => e.Path != AssetPaths.Root && e.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(e => !e.IsFolder).ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
+        else
+        {
+            DrawBreadcrumbs();
+            entries = Assets!.GetChildren(_currentFolder);
+        }
+        ImGui.Separator();
+
+        EditorTheme.PushSelectionColors();
+        if (GridView)
+            DrawGrid(entries);
+        else
+            DrawList(entries, showPath: search.Length > 0);
+        EditorTheme.PopSelectionColors();
 
         if (entries.Count == 0)
-            Placeholder("This folder is empty.");
+            Placeholder(search.Length > 0 ? "Nothing matches the search." : "This folder is empty.");
 
         DrawEmptyArea();
     }
 
-    private void DrawEntryRow(AssetEntry entry)
+    private void DrawList(IReadOnlyList<AssetEntry> entries, bool showPath)
     {
-        ImGui.TableNextRow();
-        ImGui.TableSetColumnIndex(0);
-        ImGui.PushID(entry.Path);
-
-        DrawTypeSwatch(entry);
-        ImGui.SameLine();
-
-        if (entry.Path == _renamingPath)
+        ImGuiTableFlags flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable;
+        if (!ImGui.BeginTable("##entries", 2, flags))
+            return;
+        ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, ImGui.GetFontSize() * 6);
+        foreach (AssetEntry entry in entries)
         {
-            DrawRenameField(entry);
-        }
-        else
-        {
-            bool selected = _context.SelectedAssetGuid == entry.Guid;
-            if (ImGui.Selectable(entry.Name, selected,
-                    ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowDoubleClick))
-            {
-                _context.SelectedAssetGuid = entry.Guid;
-                if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
-                    Activate(entry);
-            }
-            DrawDragSource(entry);
-            if (entry.IsFolder)
-                DrawDropTarget(entry.Path);
-            if (ImGui.BeginPopupContextItem())
-            {
-                _context.SelectedAssetGuid = entry.Guid;
-                DrawEntryMenuItems(entry);
-                ImGui.EndPopup();
-            }
-        }
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.PushID(entry.Path);
 
-        ImGui.TableSetColumnIndex(1);
-        ImGui.TextDisabled(entry.Meta.Importer);
+            ImGui.TextColored(AssetIcons.Color(entry), AssetIcons.Icon(entry));
+            ImGui.SameLine();
+            if (entry.Path == _renamingPath)
+            {
+                ImGui.SetNextItemWidth(-float.Epsilon);
+                DrawRenameField(entry);
+            }
+            else
+            {
+                bool selected = _context.SelectedAssetGuid == entry.Guid;
+                Vector2 textPos = ImGui.GetCursorScreenPos();
+                bool clicked = ImGui.Selectable(entry.Name, selected,
+                    ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowDoubleClick);
+                HandleEntryItem(entry, clicked);
+                // Search results come from any folder: show which one, dimmed, after the name.
+                if (showPath)
+                {
+                    textPos.X += ImGui.CalcTextSize(entry.Name + "   ").X;
+                    ImGui.GetWindowDrawList().AddText(textPos, ImGui.GetColorU32(ImGuiCol.TextDisabled),
+                        AssetPaths.GetParent(entry.Path) ?? "");
+                }
+            }
 
-        ImGui.PopID();
+            ImGui.TableSetColumnIndex(1);
+            ImGui.TextDisabled(entry.Meta.Importer);
+            ImGui.PopID();
+        }
+        ImGui.EndTable();
     }
 
-    /// <summary>Small colored square standing in for an icon until there are real ones.</summary>
-    private static void DrawTypeSwatch(AssetEntry entry)
+    /// <summary>Unity's default view: a big icon per asset with its name underneath.</summary>
+    private void DrawGrid(IReadOnlyList<AssetEntry> entries)
     {
-        Vector4 color = entry.Meta.Importer switch
+        ImGuiStylePtr style = ImGui.GetStyle();
+        float cellWidth = EditorFonts.LargeIconSize + 36f;
+        float cellHeight = EditorFonts.LargeIconSize + ImGui.GetTextLineHeight() + 14f;
+        float spacing = style.ItemSpacing.X;
+        int columns = Math.Max(1, (int)((ImGui.GetContentRegionAvail().X + spacing) / (cellWidth + spacing)));
+        ImDrawListPtr drawList = ImGui.GetWindowDrawList();
+
+        ImGui.Spacing();
+        for (int i = 0; i < entries.Count; i++)
         {
-            AssetImporters.Folder => new(0.86f, 0.70f, 0.32f, 1f),
-            AssetImporters.Scene => new(0.40f, 0.62f, 0.95f, 1f),
-            AssetImporters.Texture => new(0.72f, 0.50f, 0.90f, 1f),
-            AssetImporters.Model => new(0.45f, 0.80f, 0.50f, 1f),
-            AssetImporters.Script => new(0.40f, 0.82f, 0.85f, 1f),
-            _ => new(0.55f, 0.55f, 0.55f, 1f),
-        };
-        float size = ImGui.GetTextLineHeight() * 0.6f;
-        Vector2 cursor = ImGui.GetCursorScreenPos();
-        Vector2 min = cursor + new Vector2(0, (ImGui.GetTextLineHeight() - size) * 0.5f);
-        ImGui.GetWindowDrawList().AddRectFilled(min, min + new Vector2(size), ImGui.GetColorU32(color), 2f);
-        ImGui.Dummy(new Vector2(size, ImGui.GetTextLineHeight()));
+            AssetEntry entry = entries[i];
+            if (i % columns != 0)
+                ImGui.SameLine(0, spacing);
+            ImGui.PushID(entry.Path);
+
+            Vector2 min = ImGui.GetCursorScreenPos();
+            bool selected = _context.SelectedAssetGuid == entry.Guid;
+            bool clicked = ImGui.Selectable("##cell", selected, ImGuiSelectableFlags.AllowDoubleClick, new Vector2(cellWidth, cellHeight));
+            if (entry.Path != _renamingPath)
+                HandleEntryItem(entry, clicked);
+            if (ImGui.IsItemHovered() && entry.Path != _renamingPath)
+                ImGui.SetTooltip(entry.Path);
+
+            // Icon centered at the top, name centered below (shortened with "…" when too long).
+            ImGui.PushFont(EditorFonts.LargeIcons);
+            string icon = AssetIcons.Icon(entry);
+            Vector2 iconSize = ImGui.CalcTextSize(icon);
+            drawList.AddText(min + new Vector2((cellWidth - iconSize.X) / 2, 4), ImGui.GetColorU32(AssetIcons.Color(entry)), icon);
+            ImGui.PopFont();
+
+            float nameY = min.Y + EditorFonts.LargeIconSize + 8f;
+            if (entry.Path == _renamingPath)
+            {
+                Vector2 after = ImGui.GetCursorScreenPos();
+                ImGui.SetCursorScreenPos(new Vector2(min.X, nameY - 2));
+                ImGui.SetNextItemWidth(cellWidth);
+                DrawRenameField(entry);
+                ImGui.SetCursorScreenPos(after);
+            }
+            else
+            {
+                string name = Ellipsize(entry.Name, cellWidth - 4f);
+                float nameWidth = ImGui.CalcTextSize(name).X;
+                drawList.AddText(new Vector2(min.X + (cellWidth - nameWidth) / 2, nameY), ImGui.GetColorU32(ImGuiCol.Text), name);
+            }
+            ImGui.PopID();
+        }
+    }
+
+    private static string Ellipsize(string text, float maxWidth)
+    {
+        if (ImGui.CalcTextSize(text).X <= maxWidth)
+            return text;
+        for (int length = text.Length - 1; length > 0; length--)
+        {
+            string shortened = text[..length] + "…";
+            if (ImGui.CalcTextSize(shortened).X <= maxWidth)
+                return shortened;
+        }
+        return "…";
+    }
+
+    /// <summary>Click, double-click, drag and drop, and context menu of an asset in the list or the grid.</summary>
+    private void HandleEntryItem(AssetEntry entry, bool clicked)
+    {
+        if (clicked)
+        {
+            _context.SelectedAssetGuid = entry.Guid;
+            if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                Activate(entry);
+        }
+        DrawDragSource(entry);
+        if (entry.IsFolder)
+            DrawDropTarget(entry.Path);
+        if (ImGui.BeginPopupContextItem())
+        {
+            _context.SelectedAssetGuid = entry.Guid;
+            DrawEntryMenuItems(entry);
+            ImGui.EndPopup();
+        }
     }
 
     private void DrawEntryMenuItems(AssetEntry entry)
@@ -278,7 +395,7 @@ public sealed class ProjectPanel : EditorPanel
 
     private void DrawCreateMenuItems()
     {
-        if (ImGui.MenuItem("Folder"))
+        if (ImGui.MenuItem($"{Icons.Folder}  Folder"))
         {
             string parent = _currentFolder;
             _pendingChange = () =>
@@ -376,7 +493,6 @@ public sealed class ProjectPanel : EditorPanel
             _focusRenameField = false;
         }
 
-        ImGui.SetNextItemWidth(-float.Epsilon);
         bool submitted = ImGui.InputText("##rename", ref _renameBuffer, 256,
             ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);
 

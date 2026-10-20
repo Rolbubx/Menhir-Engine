@@ -1,8 +1,10 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
 using ImGuiNET;
+using Menhir.Editor.Assets;
 using Menhir.Editor.Commands;
 using Menhir.Editor.Scenes;
+using Menhir.Editor.UI;
 
 namespace Menhir.Editor.Panels;
 
@@ -23,6 +25,7 @@ public sealed class HierarchyPanel : EditorPanel
 
     private long _renamingId;
     private string _renameBuffer = "";
+    private string _search = "";
     private bool _focusRenameField;
 
     public HierarchyPanel(EditorContext context)
@@ -32,23 +35,28 @@ public sealed class HierarchyPanel : EditorPanel
 
     public override string Title => "Hierarchy";
 
+    public override string Icon => Icons.Hierarchy;
+
     private Scene Scene => _context.ActiveScene;
 
     protected override void DrawContent()
     {
-        if (ImGui.Button("+"))
-            ImGui.OpenPopup("CreateEntity");
-        if (ImGui.BeginPopup("CreateEntity"))
-        {
-            DrawCreateMenuItems(parentId: 0);
-            ImGui.EndPopup();
-        }
-        ImGui.SameLine();
-        ImGui.TextDisabled(_context.IsSceneDirty ? Scene.Name + "*" : Scene.Name);
-        ImGui.Separator();
+        DrawToolbar();
+        DrawSceneRow();
 
-        foreach (Entity root in Scene.GetChildren(0))
-            DrawEntityNode(root);
+        EditorTheme.PushSelectionColors();
+        // Rows touch each other, so the selection is one solid band like Unity's.
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, ImGui.GetStyle().ItemSpacing with { Y = 0 });
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, ImGui.GetStyle().FramePadding with { Y = 2 });
+        if (_search.Trim().Length > 0)
+            DrawSearchResults(_search.Trim());
+        else
+        {
+            foreach (Entity root in Scene.GetChildren(0))
+                DrawEntityNode(root);
+        }
+        ImGui.PopStyleVar(2);
+        EditorTheme.PopSelectionColors();
 
         DrawEmptyArea();
         HandleShortcuts();
@@ -57,20 +65,78 @@ public sealed class HierarchyPanel : EditorPanel
         _pendingChange = null;
     }
 
+    private void DrawToolbar()
+    {
+        if (ImGui.Button($"{Icons.Plus}##create"))
+            ImGui.OpenPopup("CreateEntity");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Create an entity");
+        if (ImGui.BeginPopup("CreateEntity"))
+        {
+            DrawCreateMenuItems(parentId: 0);
+            ImGui.EndPopup();
+        }
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(-float.Epsilon);
+        ImGui.InputTextWithHint("##search", $"{Icons.Search}  Search", ref _search, 128);
+    }
+
+    /// <summary>The scene's name above its entities, with a * when it has unsaved changes.</summary>
+    private void DrawSceneRow()
+    {
+        ImGui.Spacing();
+        Vector2 min = ImGui.GetCursorScreenPos() - new Vector2(ImGui.GetStyle().WindowPadding.X, 0);
+        float height = ImGui.GetFrameHeight();
+        Vector2 max = new(min.X + ImGui.GetWindowWidth(), min.Y + height);
+        ImGui.GetWindowDrawList().AddRectFilled(min, max, ImGui.GetColorU32(EditorTheme.HeaderBar));
+
+        ImGui.SetCursorScreenPos(new Vector2(ImGui.GetCursorScreenPos().X, min.Y + (height - ImGui.GetTextLineHeight()) / 2));
+        ImGui.TextColored(AssetIcons.Color(AssetImporters.Scene), Icons.Scene);
+        ImGui.SameLine();
+        ImGui.PushFont(EditorFonts.Bold);
+        ImGui.TextUnformatted(_context.IsSceneDirty ? Scene.Name + "*" : Scene.Name);
+        ImGui.PopFont();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(_context.ActiveScenePath ?? "Not saved yet");
+        ImGui.SetCursorScreenPos(new Vector2(ImGui.GetCursorScreenPos().X, max.Y + 2));
+    }
+
+    /// <summary>While searching: every entity whose name matches, as a flat list.</summary>
+    private void DrawSearchResults(string search)
+    {
+        bool any = false;
+        foreach (Entity entity in Scene.Entities)
+        {
+            if (!entity.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
+                continue;
+            any = true;
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen |
+                                       ImGuiTreeNodeFlags.SpanAvailWidth | ImGuiTreeNodeFlags.FramePadding;
+            if (entity.LocalId == _context.SelectedEntityId)
+                flags |= ImGuiTreeNodeFlags.Selected;
+            ImGui.TreeNodeEx($"{Icons.Entity}  {entity.Name}##found{entity.LocalId}", flags);
+            if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
+                _context.SelectedEntityId = entity.LocalId;
+            DrawContextMenu(entity);
+        }
+        if (!any)
+            Placeholder("No entity matches.");
+    }
+
     private void DrawEntityNode(Entity entity)
     {
         bool hasChildren = Scene.HasChildren(entity);
         bool renaming = entity.LocalId == _renamingId;
 
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.SpanAvailWidth |
-                                   ImGuiTreeNodeFlags.DefaultOpen;
+                                   ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.FramePadding;
         if (!hasChildren)
             flags |= ImGuiTreeNodeFlags.Leaf;
         if (entity.LocalId == _context.SelectedEntityId)
             flags |= ImGuiTreeNodeFlags.Selected;
 
         // The ID after ## stays stable when the entity is renamed, so the open state survives.
-        string label = renaming ? "" : entity.Name;
+        string label = renaming ? Icons.Entity : $"{Icons.Entity}  {entity.Name}";
         bool open = ImGui.TreeNodeEx($"{label}##entity{entity.LocalId}", flags);
 
         if (ImGui.IsItemClicked(ImGuiMouseButton.Left) && !ImGui.IsItemToggledOpen())
@@ -146,9 +212,9 @@ public sealed class HierarchyPanel : EditorPanel
 
     private void DrawCreateMenuItems(long parentId)
     {
-        if (ImGui.MenuItem("Empty"))
+        if (ImGui.MenuItem($"{Icons.Entity}  Empty"))
             _pendingChange = () => Create("Entity", parentId, withCube: false);
-        if (ImGui.MenuItem("Cube"))
+        if (ImGui.MenuItem($"{Icons.MeshRenderer}  Cube"))
             _pendingChange = () => Create("Cube", parentId, withCube: true);
     }
 
@@ -202,7 +268,7 @@ public sealed class HierarchyPanel : EditorPanel
         }
 
         // No vertical padding so the field fits in the tree row.
-        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(ImGui.GetStyle().FramePadding.X, 0));
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(ImGui.GetStyle().FramePadding.X, 1));
         ImGui.SetNextItemWidth(-1);
         bool submitted = ImGui.InputText("##rename", ref _renameBuffer, 256,
             ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);

@@ -25,19 +25,19 @@ public sealed class UnsavedChangesDialog : ModalDialog
         ImGui.TextDisabled("Your changes will be lost if you don't save them.");
         ImGui.Spacing();
 
-        if (ImGui.Button("Save"))
+        if (Button("Save", primary: true))
         {
             Close();
             _onSave?.Invoke();
         }
         ImGui.SameLine();
-        if (ImGui.Button("Don't Save"))
+        if (Button("Don't Save"))
         {
             Close();
             _onDiscard?.Invoke();
         }
         ImGui.SameLine();
-        if (ImGui.Button("Cancel") || ImGui.IsKeyPressed(ImGuiKey.Escape))
+        if (Button("Cancel") || ImGui.IsKeyPressed(ImGuiKey.Escape))
             Close();
     }
 }

@@ -96,6 +96,7 @@ A component whose type no longer exists is kept as is and saved back unchanged.
 - **+** button or right-click: create an empty entity or a cube (as a child from an entity's menu)
 - Double-click or **F2** to rename (**Enter** to confirm, **Esc** to cancel); **Del** deletes with children
 - Drag an entity onto another to reparent it (its world position is kept); drop it in the empty area to make it a root
+- **Search** shows every entity whose name contains the text, as a flat list
 
 ### Inspector
 
@@ -104,10 +105,14 @@ A component whose type no longer exists is kept as is and saved back unchanged.
 - Drag a number to change it, or Ctrl+click / double-click it to type a value
 - Components are drawn by reflection: every public property with a public getter and setter is shown,
   unless marked `[HideInInspector]`; a `Vector4` marked `[Color]` gets a color picker
+- **Add Component** (under the components) lists the component types, with a search field;
+  the **⋮** button or a right-click on a component's header removes it (both can be undone)
 
 ### Project
 
-- Folder tree on the left, content of the current folder on the right; double-click a folder to open it
+- Folder tree on the left, content of the current folder on the right (as icons or as a list, toggled at the
+  top right); double-click a folder to open it
+- **Search** finds assets by name in the whole project
 - Every file and folder in `Assets/` gets a `.meta` file holding its GUID and import settings.
   Commit them with the assets: references use the GUID, so an asset keeps its identity when renamed or moved
 - Missing `.meta` files are created, orphan ones are deleted and copied ones get a new GUID when
@@ -127,9 +132,12 @@ A component whose type no longer exists is kept as is and saved back unchanged.
   **Copy** in the details, right-click, or Ctrl+C copies it
 - Keeps the last 5000 messages; the filters are saved with the editor preferences
 
+The status bar at the bottom of the window shows the latest message; click it to open the Console.
+
 Editor code logs with `Log.Info`, `Log.Warning` and `Log.Error` (`Menhir.Editor.Logging`, safe from any thread).
 
 World conventions: right-handed, Y up, 1 unit = 1 meter.
 
-The editor font is [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), distributed under the
-SIL Open Font License (`Editor/Menhir.Editor/Resources/Fonts/JetBrainsMono-OFL.txt`).
+Fonts and icons, in `Editor/Menhir.Editor/Resources/Fonts` with their licenses:
+[Inter](https://rsms.me/inter/) for the UI and [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)
+for logs, paths and GUIDs (both SIL Open Font License), and [Lucide](https://lucide.dev) icons (ISC License).

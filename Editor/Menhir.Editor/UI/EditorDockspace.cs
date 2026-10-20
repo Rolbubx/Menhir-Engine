@@ -13,6 +13,12 @@ public sealed class EditorDockspace
 {
     private const string HostWindowName = "MenhirDockspaceHost";
 
+    /// <summary>
+    /// Bump when panel window IDs change, so a layout.ini saved by an older editor
+    /// (which would leave the panels floating) is replaced by the default layout.
+    /// </summary>
+    public const int LayoutVersion = 2;
+
     private bool _resetRequested;
 
     public EditorDockspace(bool buildDefaultLayout)
@@ -22,13 +28,17 @@ public sealed class EditorDockspace
 
     public void RequestLayoutReset() => _resetRequested = true;
 
-    /// <summary>Call once per frame, after the main menu bar and before drawing panels.</summary>
-    public void Draw()
+    /// <summary>
+    /// Call once per frame, after the main menu bar and before drawing panels.
+    /// <paramref name="bottomMargin"/> is left free at the bottom (for the status bar).
+    /// </summary>
+    public void Draw(float bottomMargin)
     {
         // Host window covering the work area (the main viewport minus the menu bar).
         ImGuiViewportPtr viewport = ImGui.GetMainViewport();
+        Vector2 size = viewport.WorkSize - new Vector2(0, bottomMargin);
         ImGui.SetNextWindowPos(viewport.WorkPos);
-        ImGui.SetNextWindowSize(viewport.WorkSize);
+        ImGui.SetNextWindowSize(size);
         ImGui.SetNextWindowViewport(viewport.ID);
 
         const ImGuiWindowFlags hostFlags =
@@ -45,7 +55,7 @@ public sealed class EditorDockspace
         uint dockspaceId = ImGui.GetID("MenhirDockspace");
         if (_resetRequested)
         {
-            BuildDefaultLayout(dockspaceId, viewport.WorkSize);
+            BuildDefaultLayout(dockspaceId, size);
             _resetRequested = false;
         }
 
@@ -61,11 +71,12 @@ public sealed class EditorDockspace
         uint right = DockBuilder.Split(rest, ImGuiDir.Right, 0.24f, out rest);
         uint bottom = DockBuilder.Split(rest, ImGuiDir.Down, 0.28f, out uint center);
 
-        DockBuilder.DockWindow("Hierarchy", left);
-        DockBuilder.DockWindow("Inspector", right);
-        DockBuilder.DockWindow("Project", bottom);
-        DockBuilder.DockWindow("Console", bottom);
-        DockBuilder.DockWindow("Viewport", center);
+        // Window IDs, see EditorPanel.WindowId.
+        DockBuilder.DockWindow("###Hierarchy", left);
+        DockBuilder.DockWindow("###Inspector", right);
+        DockBuilder.DockWindow("###Project", bottom);
+        DockBuilder.DockWindow("###Console", bottom);
+        DockBuilder.DockWindow("###Viewport", center);
         DockBuilder.Finish(dockspaceId);
     }
 }

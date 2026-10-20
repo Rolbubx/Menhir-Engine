@@ -15,8 +15,14 @@ public sealed class EditorPreferences
     public int WindowHeight { get; set; } = 900;
     public bool WindowMaximized { get; set; }
 
+    /// <summary><see cref="UI.EditorDockspace.LayoutVersion"/> of the saved layout.ini.</summary>
+    public int LayoutVersion { get; set; }
+
     /// <summary>Panel title → is the panel open.</summary>
     public Dictionary<string, bool> OpenPanels { get; set; } = new();
+
+    /// <summary>Project panel shows icons (true) or a list.</summary>
+    public bool ProjectGridView { get; set; } = true;
 
     /// <summary>Console panel toggles (levels shown, collapse).</summary>
     public LogFilter ConsoleFilter { get; set; } = new();

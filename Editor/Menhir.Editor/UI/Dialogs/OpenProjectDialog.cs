@@ -45,10 +45,10 @@ public sealed class OpenProjectDialog : ModalDialog
             ImGui.TextDisabled("Select a project folder (it contains an Assets folder).");
         ErrorText(_error);
 
-        if (Button("Open", valid))
+        if (Button("Open", valid, primary: true))
             TryOpen(target);
         ImGui.SameLine();
-        if (ImGui.Button("Cancel") || ImGui.IsKeyPressed(ImGuiKey.Escape))
+        if (Button("Cancel") || ImGui.IsKeyPressed(ImGuiKey.Escape))
             Close();
     }
 

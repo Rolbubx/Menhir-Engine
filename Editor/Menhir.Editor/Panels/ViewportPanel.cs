@@ -1,6 +1,7 @@
 using System.Numerics;
 using ImGuiNET;
 using Menhir.Editor.Rendering;
+using Menhir.Editor.UI;
 
 namespace Menhir.Editor.Panels;
 
@@ -36,6 +37,8 @@ public sealed class ViewportPanel : EditorPanel, IDisposable
     }
 
     public override string Title => "Viewport";
+
+    public override string Icon => Icons.Viewport;
 
     protected override ImGuiWindowFlags WindowFlags =>
         ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;

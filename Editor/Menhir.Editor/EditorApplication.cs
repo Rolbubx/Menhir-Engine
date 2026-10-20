@@ -26,6 +26,7 @@ public sealed class EditorApplication : IDisposable
     private readonly EditorPreferences _preferences;
     private readonly EditorContext _context = new();
     private readonly EditorDockspace _dockspace;
+    private readonly StatusBar _statusBar;
     private List<EditorPanel> _panels = [];
 
     private readonly UnsavedChangesDialog _unsavedChangesDialog = new();
@@ -55,7 +56,14 @@ public sealed class EditorApplication : IDisposable
         EditorPaths.EnsureConfigDirectory();
         _preferences = EditorPreferences.Load(EditorPaths.PreferencesFile);
         _saveSceneDialog = new SaveSceneDialog(_context);
+        _statusBar = new StatusBar(Log.Messages, ShowConsole);
         OpenStartupProject(args);
+
+        if (_preferences.LayoutVersion != EditorDockspace.LayoutVersion)
+        {
+            File.Delete(EditorPaths.LayoutFile);
+            _preferences.LayoutVersion = EditorDockspace.LayoutVersion;
+        }
 
         // No saved layout yet: build the default one on the first frame.
         _dockspace = new EditorDockspace(buildDefaultLayout: !File.Exists(EditorPaths.LayoutFile));
@@ -162,7 +170,8 @@ public sealed class EditorApplication : IDisposable
     {
         _gl = _window.CreateOpenGL();
         _input = _window.CreateInput();
-        _imgui = new ImGuiController(_gl, _window, _input, EditorFonts.CreateConfig(), ConfigureImGui);
+        // Fonts are added in ConfigureImGui, which runs before the controller builds the font atlas.
+        _imgui = new ImGuiController(_gl, _window, _input, null, ConfigureImGui);
         ImGuiModifierKeys.Attach(_input);
 
         Log.Info($"OpenGL {_gl.GetStringS(StringName.Version)} — {_gl.GetStringS(StringName.Renderer)}");
@@ -173,7 +182,7 @@ public sealed class EditorApplication : IDisposable
             new ViewportPanel(_context, _renderer, SetCursorCaptured),
             new HierarchyPanel(_context),
             new InspectorPanel(_context),
-            new ProjectPanel(_context, OpenSceneAsset),
+            new ProjectPanel(_context, OpenSceneAsset) { GridView = _preferences.ProjectGridView },
             new ConsolePanel(Log.Messages, _preferences.ConsoleFilter),
         ];
         foreach (EditorPanel panel in _panels)
@@ -181,6 +190,13 @@ public sealed class EditorApplication : IDisposable
             if (_preferences.OpenPanels.TryGetValue(panel.Title, out bool open))
                 panel.IsOpen = open;
         }
+    }
+
+    private void ShowConsole()
+    {
+        EditorPanel console = _panels.First(p => p is ConsolePanel);
+        console.IsOpen = true;
+        ImGui.SetWindowFocus(console.WindowId);
     }
 
     /// <summary>Hides the cursor and gives unbounded mouse motion, e.g. while flying the viewport camera.</summary>
@@ -205,6 +221,7 @@ public sealed class EditorApplication : IDisposable
         _layoutFilePath = Marshal.StringToCoTaskMemUTF8(EditorPaths.LayoutFile);
         io.NativePtr->IniFilename = (byte*)_layoutFilePath;
 
+        EditorFonts.Load();
         EditorTheme.Apply();
     }
 
@@ -216,7 +233,8 @@ public sealed class EditorApplication : IDisposable
         _gl.Clear(ClearBufferMask.ColorBufferBit);
 
         DrawMainMenuBar();
-        _dockspace.Draw();
+        _dockspace.Draw(bottomMargin: StatusBar.Height);
+        _statusBar.Draw();
         foreach (EditorPanel panel in _panels)
             panel.Draw();
 
@@ -272,7 +290,7 @@ public sealed class EditorApplication : IDisposable
             foreach (EditorPanel panel in _panels)
             {
                 bool open = panel.IsOpen;
-                if (ImGui.MenuItem(panel.Title, null, ref open))
+                if (ImGui.MenuItem($"{panel.Icon}  {panel.Title}", null, ref open))
                     panel.IsOpen = open;
             }
             ImGui.Separator();
@@ -386,6 +404,8 @@ public sealed class EditorApplication : IDisposable
         }
         foreach (EditorPanel panel in _panels)
             _preferences.OpenPanels[panel.Title] = panel.IsOpen;
+        if (_panels.OfType<ProjectPanel>().FirstOrDefault() is { } project)
+            _preferences.ProjectGridView = project.GridView;
         _preferences.Save(EditorPaths.PreferencesFile);
 
         // GPU resources and the ImGui context (whose destruction writes layout.ini)

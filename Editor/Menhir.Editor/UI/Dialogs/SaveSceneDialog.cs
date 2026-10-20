@@ -61,7 +61,7 @@ public sealed class SaveSceneDialog : ModalDialog
         ErrorText(_error);
         ImGui.Spacing();
 
-        if (ImGui.Button("Save") || submitted)
+        if (Button("Save", primary: true) || submitted)
         {
             try
             {
@@ -75,7 +75,7 @@ public sealed class SaveSceneDialog : ModalDialog
             }
         }
         ImGui.SameLine();
-        if (ImGui.Button("Cancel") || ImGui.IsKeyPressed(ImGuiKey.Escape))
+        if (Button("Cancel") || ImGui.IsKeyPressed(ImGuiKey.Escape))
             Close();
     }
 }

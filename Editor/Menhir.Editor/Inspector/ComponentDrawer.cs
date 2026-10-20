@@ -5,6 +5,7 @@ using Menhir.Editor.Commands;
 using Menhir.Editor.Inspection;
 using Menhir.Editor.Mathematics;
 using Menhir.Editor.Scenes;
+using Menhir.Editor.UI;
 
 namespace Menhir.Editor.Inspector;
 
@@ -15,6 +16,9 @@ namespace Menhir.Editor.Inspector;
 /// </summary>
 public static class ComponentDrawer
 {
+    /// <summary>Icon shown in the component's header and in the Add Component menu.</summary>
+    public static string IconFor(Type type) => type == typeof(MeshRenderer) ? Icons.MeshRenderer : Icons.Component;
+
     public static void Draw(Component component, Action<ICommand> execute)
     {
         if (!PropertyTable.Begin("##properties"))
@@ -64,26 +68,26 @@ public static class ComponentDrawer
                 return true;
 
             case Vector2 v2:
-                if (!ImGui.DragFloat2("##value", ref v2, 0.01f))
+                if (!PropertyTable.Vector("##value", ref v2, 0.01f))
                     return false;
                 newValue = v2;
                 return true;
 
             case Vector3 v3:
-                if (!ImGui.DragFloat3("##value", ref v3, 0.01f))
+                if (!PropertyTable.Vector("##value", ref v3, 0.01f))
                     return false;
                 newValue = v3;
                 return true;
 
             case Vector4 v4 when property.GetCustomAttribute<ColorAttribute>() != null:
                 Vector4 shown = ColorSpace.LinearToGamma(v4);
-                if (!ImGui.ColorEdit4("##value", ref shown))
+                if (!ColorField(ref shown))
                     return false;
                 newValue = ColorSpace.GammaToLinear(shown);
                 return true;
 
             case Vector4 v4:
-                if (!ImGui.DragFloat4("##value", ref v4, 0.01f))
+                if (!PropertyTable.Vector("##value", ref v4, 0.01f))
                     return false;
                 newValue = v4;
                 return true;
@@ -95,6 +99,23 @@ public static class ComponentDrawer
                 ImGui.TextDisabled($"({property.PropertyType.Name} not supported yet)");
                 return false;
         }
+    }
+
+    /// <summary>A color bar filling the field, like Unity's; clicking it opens a picker.</summary>
+    private static bool ColorField(ref Vector4 color)
+    {
+        const ImGuiColorEditFlags flags = ImGuiColorEditFlags.AlphaPreviewHalf | ImGuiColorEditFlags.AlphaBar;
+        if (ImGui.ColorButton("##swatch", color, flags, new Vector2(ImGui.CalcItemWidth(), ImGui.GetFrameHeight())))
+            ImGui.OpenPopup("##picker");
+
+        bool changed = false;
+        if (ImGui.BeginPopup("##picker"))
+        {
+            ImGui.SetNextItemWidth(ImGui.GetFontSize() * 14);
+            changed = ImGui.ColorPicker4("##picker", ref color, flags);
+            ImGui.EndPopup();
+        }
+        return changed;
     }
 
     private static bool DrawEnum(Enum value, out object? newValue)

@@ -201,3 +201,54 @@ public sealed class SetPropertyCommand : ICommand
         return true;
     }
 }
+
+/// <summary>Adds a component at the end of an entity's list.</summary>
+public sealed class AddComponentCommand : ICommand
+{
+    private readonly Entity _entity;
+    private readonly Component _component;
+
+    public AddComponentCommand(Entity entity, Component component)
+    {
+        _entity = entity;
+        _component = component;
+    }
+
+    public string Name => $"Add {InspectableProperties.NicifyName(_component.GetType().Name)}";
+
+    public void Do() => _entity.Components.Add(_component);
+
+    public void Undo() => _entity.Components.Remove(_component);
+
+    public bool TryMerge(ICommand next) => false;
+}
+
+/// <summary>Removes a component; undo puts it back at the same position.</summary>
+public sealed class RemoveComponentCommand : ICommand
+{
+    private readonly Entity _entity;
+    private readonly Component _component;
+    private int _index;
+
+    public RemoveComponentCommand(Entity entity, Component component)
+    {
+        _entity = entity;
+        _component = component;
+    }
+
+    public string Name => $"Remove {InspectableProperties.NicifyName(ComponentName)}";
+
+    private string ComponentName => _component is MissingComponent missing ? missing.TypeName : _component.GetType().Name;
+
+    public void Do()
+    {
+        _index = _entity.Components.IndexOf(_component);
+        if (_index < 0)
+            throw new InvalidOperationException("The component is not on this entity.");
+        _entity.Components.RemoveAt(_index);
+    }
+
+    public void Undo() => _entity.Components.Insert(_index, _component);
+
+    public bool TryMerge(ICommand next) => false;
+}

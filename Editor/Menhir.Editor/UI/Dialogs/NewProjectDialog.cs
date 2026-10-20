@@ -52,7 +52,7 @@ public sealed class NewProjectDialog : ModalDialog
         ImGui.TextDisabled(name.Length > 0 ? Path.Combine(location, name) : "Enter a name.");
         ErrorText(_error);
 
-        if (Button("Create", name.Length > 0) || (submitted && name.Length > 0))
+        if (Button("Create", name.Length > 0, primary: true) || (submitted && name.Length > 0))
         {
             try
             {
@@ -66,7 +66,7 @@ public sealed class NewProjectDialog : ModalDialog
             }
         }
         ImGui.SameLine();
-        if (ImGui.Button("Cancel") || ImGui.IsKeyPressed(ImGuiKey.Escape))
+        if (Button("Cancel") || ImGui.IsKeyPressed(ImGuiKey.Escape))
             Close();
     }
 }

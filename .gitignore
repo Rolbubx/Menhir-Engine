@@ -1,0 +1,23 @@
+# Build output
+build/
+bin/
+obj/
+out/
+
+# IDEs
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+
+# Menhir project cache (regenerable)
+Cache/
+**/Cache/
+
+# ImGui default ini (the editor stores its layout in the user config dir)
+imgui.ini
+
+# OS
+.DS_Store
+Thumbs.db

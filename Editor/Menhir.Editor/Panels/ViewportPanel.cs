@@ -23,6 +23,7 @@ public sealed class ViewportPanel : EditorPanel, IDisposable
     private readonly SceneRenderer _sceneRenderer;
     private readonly Action<bool> _setCursorCaptured;
     private readonly EditorCamera _camera = new();
+    private readonly ViewportOptions _options = new();
 
     private bool _flying;
     private float _moveSpeed = 5f;
@@ -33,7 +34,7 @@ public sealed class ViewportPanel : EditorPanel, IDisposable
         _context = context;
         _setCursorCaptured = setCursorCaptured;
         _target = renderer.CreateRenderTarget(1, 1);
-        _sceneRenderer = new SceneRenderer(renderer);
+        _sceneRenderer = new SceneRenderer(renderer, ResolveAssetPath);
     }
 
     public override string Title => "Viewport";
@@ -60,13 +61,43 @@ public sealed class ViewportPanel : EditorPanel, IDisposable
 
         Vector2 pixelScale = ImGui.GetIO().DisplayFramebufferScale;
         _target.Resize((int)(size.X * pixelScale.X), (int)(size.Y * pixelScale.Y));
-        _sceneRenderer.Render(_context.ActiveScene, _target, _camera.GetViewParams(size.X / size.Y),
+        _sceneRenderer.Render(_context.ActiveScene, _target, _camera.GetViewParams(size.X / size.Y), _options,
             _context.SelectedEntityId);
 
         // GL textures start at the bottom-left, ImGui images at the top-left: flip V.
         ImGui.Image(_target.ColorTexture, size, new Vector2(0, 1), new Vector2(1, 0));
 
         DrawOverlay(origin);
+        DrawEffectsMenu(origin, size);
+    }
+
+    private string? ResolveAssetPath(Guid guid) =>
+        _context.Project is { } project && project.Assets.FindByGuid(guid) is { } asset
+            ? project.Assets.ToAbsolutePath(asset.Path)
+            : null;
+
+    /// <summary>Top-right button to show or hide the skybox, post-processing and grid, like Unity's scene view.</summary>
+    private void DrawEffectsMenu(Vector2 origin, Vector2 size)
+    {
+        const string label = "Effects";
+        Vector2 buttonSize = new(ImGui.CalcTextSize($"{Icons.Layers}  {label}").X + ImGui.GetStyle().FramePadding.X * 2,
+            ImGui.GetFrameHeight());
+        ImGui.SetCursorScreenPos(origin + new Vector2(size.X - buttonSize.X - 8, 8));
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.12f, 0.12f, 0.12f, 0.85f));
+        if (ImGui.Button($"{Icons.Layers}  {label}", buttonSize))
+            ImGui.OpenPopup("##viewportEffects");
+        ImGui.PopStyleColor();
+
+        if (!ImGui.BeginPopup("##viewportEffects"))
+            return;
+        bool skybox = _options.Skybox, post = _options.PostProcessing, grid = _options.Grid;
+        if (ImGui.Checkbox("Skybox", ref skybox))
+            _options.Skybox = skybox;
+        if (ImGui.Checkbox("Post-processing", ref post))
+            _options.PostProcessing = post;
+        if (ImGui.Checkbox("Grid", ref grid))
+            _options.Grid = grid;
+        ImGui.EndPopup();
     }
 
     private void UpdateCamera(bool hovered)

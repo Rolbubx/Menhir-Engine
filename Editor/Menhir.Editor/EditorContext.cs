@@ -99,7 +99,7 @@ public sealed class EditorContext
 
     public void NewScene()
     {
-        ActiveScene = new Scene();
+        ActiveScene = SceneTemplates.CreateDefault();
         ActiveSceneGuid = null;
         History.Clear();
     }

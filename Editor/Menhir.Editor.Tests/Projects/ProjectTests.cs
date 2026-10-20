@@ -12,7 +12,7 @@ public sealed class ProjectTests : IDisposable
     public void Dispose() => Directory.Delete(_root, recursive: true);
 
     [Fact]
-    public void Create_MakesTheFolderLayoutAndAnEmptyScene()
+    public void Create_MakesTheFolderLayoutAndADefaultScene()
     {
         Project project = Project.Create(_root, "My Game");
 
@@ -23,7 +23,10 @@ public sealed class ProjectTests : IDisposable
         Assert.Equal("Cache/\n", File.ReadAllText(Path.Combine(project.RootPath, ".gitignore")));
 
         string scene = File.ReadAllText(Path.Combine(project.RootPath, "Assets", "Scenes", "Main.scene"));
-        Assert.Empty(SceneSerializer.Deserialize(scene, new List<string>()).Entities);
+        var warnings = new List<string>();
+        Assert.Equal(["Directional Light", "Environment", "Global Volume"],
+            SceneSerializer.Deserialize(scene, warnings).Entities.Select(e => e.Name));
+        Assert.Empty(warnings);
     }
 
     [Fact]

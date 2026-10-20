@@ -25,13 +25,18 @@ public static class PropertyTable
 
     public static void End() => ImGui.EndTable();
 
-    /// <summary>Starts a row with <paramref name="label"/>; the next widget fills the value column.</summary>
-    public static void Row(string label)
+    /// <summary>
+    /// Starts a row with <paramref name="label"/> (and <paramref name="tooltip"/> when hovering it);
+    /// the next widget fills the value column.
+    /// </summary>
+    public static void Row(string label, string? tooltip = null)
     {
         ImGui.TableNextRow();
         ImGui.TableSetColumnIndex(0);
         ImGui.AlignTextToFramePadding();
         ImGui.TextUnformatted(label);
+        if (tooltip != null && ImGui.IsItemHovered())
+            ImGui.SetTooltip(tooltip);
         ImGui.TableSetColumnIndex(1);
         ImGui.SetNextItemWidth(-float.Epsilon);
     }

@@ -63,7 +63,7 @@ public sealed class Project
 
     /// <summary>
     /// Creates a project in a new folder <paramref name="parentDirectory"/>/<paramref name="name"/>
-    /// with an empty scene at Assets/Scenes/Main.scene, and opens it.
+    /// with a default scene at Assets/Scenes/Main.scene (see <see cref="SceneTemplates"/>), and opens it.
     /// </summary>
     /// <param name="template">Defaults to <see cref="ProjectTemplates.UniversalPipeline"/>.</param>
     /// <param name="remote">Remote to share the project through, or null for a local project.</param>
@@ -95,7 +95,7 @@ public sealed class Project
         JsonFile.Save(Path.Combine(root, ProjectSettingsFolder, ProjectSettings.FileName), settings);
         File.WriteAllText(Path.Combine(root, ".gitignore"), $"{CacheFolder}/\n");
         File.WriteAllText(Path.Combine(root, AssetPaths.Root, "Scenes", "Main" + SceneSerializer.Extension),
-            SceneSerializer.Serialize(new Scene()));
+            SceneSerializer.Serialize(SceneTemplates.CreateDefault()));
 
         return Open(root);
     }

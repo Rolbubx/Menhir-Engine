@@ -13,6 +13,42 @@ public class SceneSerializerTests
     }
 
     [Fact]
+    public void RoundTrip_EveryComponentTypeWithoutWarnings()
+    {
+        var scene = new Scene();
+        Entity entity = scene.CreateEntity("All");
+        foreach (Type type in ComponentTypes.All.OrderBy(t => t.Name))
+            entity.Components.Add(ComponentTypes.Create(ComponentTypes.GetName(type))!);
+
+        string json = SceneSerializer.Serialize(scene);
+        var warnings = new List<string>();
+        Scene loaded = SceneSerializer.Deserialize(json, warnings);
+
+        Assert.Empty(warnings);
+        Assert.Equal(entity.Components.Select(c => c.GetType()), loaded.Entities[0].Components.Select(c => c.GetType()));
+        Assert.Equal(json, SceneSerializer.Serialize(loaded));
+    }
+
+    [Fact]
+    public void RoundTrip_KeepsColorCurvesAndTextureReferences()
+    {
+        var scene = new Scene();
+        Entity volume = scene.CreateEntity("Volume");
+        var guid = Guid.NewGuid();
+        var curves = new Menhir.Editor.PostProcessing.ColorCurves();
+        curves.Red = curves.Red.WithPoints([new(0, 0.1f), new(0.5f, 0.7f), new(1, 1)]);
+        volume.Components.Add(curves);
+        volume.Components.Add(new Menhir.Editor.PostProcessing.ColorLookup { Texture = guid, Contribution = 0.5f });
+
+        Scene loaded = SceneSerializer.Deserialize(SceneSerializer.Serialize(scene), new List<string>());
+
+        var loadedCurves = (Menhir.Editor.PostProcessing.ColorCurves)loaded.Entities[0].Components[0];
+        Assert.Equal(curves.Red.Points, loadedCurves.Red.Points);
+        Assert.True(loadedCurves.HueVsHue.Loop);
+        Assert.Equal(guid, ((Menhir.Editor.PostProcessing.ColorLookup)loaded.Entities[0].Components[1]).Texture);
+    }
+
+    [Fact]
     public void RoundTrip_KeepsEntitiesHierarchyAndOrder()
     {
         var scene = new Scene();

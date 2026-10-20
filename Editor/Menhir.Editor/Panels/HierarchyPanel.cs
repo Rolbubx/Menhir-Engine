@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using ImGuiNET;
 using Menhir.Editor.Assets;
 using Menhir.Editor.Commands;
+using Menhir.Editor.Inspector;
 using Menhir.Editor.Scenes;
 using Menhir.Editor.UI;
 
@@ -114,13 +115,20 @@ public sealed class HierarchyPanel : EditorPanel
                                        ImGuiTreeNodeFlags.SpanAvailWidth | ImGuiTreeNodeFlags.FramePadding;
             if (entity.LocalId == _context.SelectedEntityId)
                 flags |= ImGuiTreeNodeFlags.Selected;
-            ImGui.TreeNodeEx($"{Icons.Entity}  {entity.Name}##found{entity.LocalId}", flags);
+            ImGui.TreeNodeEx($"{EntityIcon(entity)}  {entity.Name}##found{entity.LocalId}", flags);
             if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
                 _context.SelectedEntityId = entity.LocalId;
             DrawContextMenu(entity);
         }
         if (!any)
             Placeholder("No entity matches.");
+    }
+
+    /// <summary>The icon of the entity's most telling component (light, sky, volume), or a box.</summary>
+    private static string EntityIcon(Entity entity)
+    {
+        Component? main = entity.Components.FirstOrDefault(c => c is not MeshRenderer and not MissingComponent);
+        return main != null ? ComponentDrawer.IconFor(main.GetType()) : Icons.Entity;
     }
 
     private void DrawEntityNode(Entity entity)
@@ -136,7 +144,7 @@ public sealed class HierarchyPanel : EditorPanel
             flags |= ImGuiTreeNodeFlags.Selected;
 
         // The ID after ## stays stable when the entity is renamed, so the open state survives.
-        string label = renaming ? Icons.Entity : $"{Icons.Entity}  {entity.Name}";
+        string label = renaming ? EntityIcon(entity) : $"{EntityIcon(entity)}  {entity.Name}";
         bool open = ImGui.TreeNodeEx($"{label}##entity{entity.LocalId}", flags);
 
         if (ImGui.IsItemClicked(ImGuiMouseButton.Left) && !ImGui.IsItemToggledOpen())

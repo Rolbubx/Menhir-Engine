@@ -52,5 +52,6 @@ public sealed class EditorCamera
             0, 0, 2f * Far * Near / (Near - Far), 0);
     }
 
-    public ViewParams GetViewParams(float aspect) => new(View, GetProjection(aspect), Position);
+    public ViewParams GetViewParams(float aspect) =>
+        new(View, GetProjection(aspect), Position, FieldOfViewY, Near, Far);
 }

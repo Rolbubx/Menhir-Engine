@@ -39,6 +39,10 @@ public static class ComponentTypes
         {
             foreach (Type type in types)
             {
+                // The type's name is saved under "type", next to the properties.
+                if (type.GetProperty("Type") is { } clash && clash.GetMethod?.IsPublic == true && clash.SetMethod?.IsPublic == true)
+                    throw new InvalidOperationException(
+                        $"{type.FullName} cannot have a saved property named Type (scene files use \"type\" for the component's type).");
                 if (ByName.TryGetValue(type.Name, out Type? existing) && existing != type)
                     throw new InvalidOperationException(
                         $"Components {existing.FullName} and {type.FullName} have the same name.");

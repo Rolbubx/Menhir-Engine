@@ -1,41 +1,91 @@
 using System.Numerics;
+using Menhir.Editor.Assets;
+using Menhir.Editor.Lighting;
+using Menhir.Editor.Logging;
 using Menhir.Editor.Scenes;
 
 namespace Menhir.Editor.Rendering;
 
+/// <summary>What the viewport shows besides the scene's objects (Unity's scene view "Effects" menu).</summary>
+public sealed class ViewportOptions
+{
+    public bool Skybox { get; set; } = true;
+    public bool PostProcessing { get; set; } = true;
+    public bool Grid { get; set; } = true;
+}
+
 /// <summary>Draws a <see cref="Scene"/> through an <see cref="IRenderer"/>.</summary>
 public sealed class SceneRenderer : IDisposable
 {
-    private static readonly Vector4 ClearColor = new(0.19f, 0.2f, 0.22f, 1f);
+    // Background when the skybox is hidden (linear; the old flat gray).
+    private static readonly Vector3 ClearColor = new(0.026f, 0.029f, 0.034f);
     private static readonly Vector4 SelectionColor = new(1f, 0.6f, 0.1f, 1f);
 
     private readonly IRenderer _renderer;
+    private readonly Func<Guid, string?> _resolveAssetPath;
     private readonly Dictionary<PrimitiveMesh, IMesh> _primitives = new();
+    private readonly Dictionary<Guid, (ITexture? Texture, DateTime Modified)> _textures = new();
 
-    public SceneRenderer(IRenderer renderer)
+    /// <param name="resolveAssetPath">Absolute file path of an asset GUID (for textures), or null.</param>
+    public SceneRenderer(IRenderer renderer, Func<Guid, string?> resolveAssetPath)
     {
         _renderer = renderer;
+        _resolveAssetPath = resolveAssetPath;
         _primitives[PrimitiveMesh.Cube] = renderer.CreateMesh(Primitives.CreateCube());
     }
 
     /// <param name="selectedEntityId">Entity drawn with a selection outline, 0 for none.</param>
-    public void Render(Scene scene, IRenderTarget target, in ViewParams view, long selectedEntityId = 0)
+    public void Render(Scene scene, IRenderTarget target, in ViewParams view, ViewportOptions options, long selectedEntityId = 0)
     {
-        _renderer.BeginPass(target, view, ClearColor);
+        SceneEnvironment environment = SceneEnvironment.Gather(scene);
+        _renderer.BeginFrame(target, view, environment, ClearColor);
+        if (options.Skybox)
+            _renderer.DrawSkybox(environment.Sky);
 
         foreach (Entity entity in scene.Entities)
         {
             if (entity.GetComponent<MeshRenderer>() is not { } meshRenderer)
                 continue;
-            Matrix4x4 world = scene.GetWorldMatrix(entity);
-            IMesh mesh = _primitives[meshRenderer.Mesh];
-            _renderer.DrawMesh(mesh, world, meshRenderer.Color);
-            if (entity.LocalId == selectedEntityId)
-                _renderer.DrawOutline(mesh, world, SelectionColor);
+            _renderer.DrawMesh(_primitives[meshRenderer.Mesh], scene.GetWorldMatrix(entity),
+                new SurfaceParams(meshRenderer.Color, meshRenderer.Metallic, meshRenderer.Smoothness));
         }
 
-        _renderer.DrawGrid();
-        _renderer.EndPass();
+        if (options.Grid)
+            _renderer.DrawGrid();
+
+        PostProcessStack stack = options.PostProcessing ? environment.PostProcessing : PostProcessStack.Empty;
+        ITexture? lookup = stack.ColorLookup?.Texture is { } guid ? GetTexture(guid) : null;
+        _renderer.PostProcess(stack, lookup);
+
+        if (scene.Find(selectedEntityId) is { } selected && selected.GetComponent<MeshRenderer>() is { } selectedRenderer)
+            _renderer.DrawOutline(_primitives[selectedRenderer.Mesh], scene.GetWorldMatrix(selected), SelectionColor);
+        _renderer.EndFrame();
+    }
+
+    /// <summary>A texture asset, loaded on first use and again when its file changes.</summary>
+    private ITexture? GetTexture(Guid guid)
+    {
+        string? path = _resolveAssetPath(guid);
+        DateTime modified = path != null && File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+        if (_textures.TryGetValue(guid, out var cached) && cached.Modified == modified)
+            return cached.Texture;
+
+        cached.Texture?.Dispose();
+        ITexture? texture = null;
+        if (path != null && modified != DateTime.MinValue)
+        {
+            try
+            {
+                texture = _renderer.CreateTexture(PngDecoder.Decode(File.ReadAllBytes(path)));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException
+                                          or NotSupportedException)
+            {
+                Log.Warning($"Could not load the texture {Path.GetFileName(path)}: {e.Message}");
+            }
+        }
+        _textures[guid] = (texture, modified);
+        return texture;
     }
 
     public void Dispose()
@@ -43,5 +93,8 @@ public sealed class SceneRenderer : IDisposable
         foreach (IMesh mesh in _primitives.Values)
             mesh.Dispose();
         _primitives.Clear();
+        foreach (var (texture, _) in _textures.Values)
+            texture?.Dispose();
+        _textures.Clear();
     }
 }

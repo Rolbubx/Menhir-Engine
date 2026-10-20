@@ -11,38 +11,138 @@ internal static class Shaders
         uniform mat4 uNormalMatrix;
         uniform mat4 uViewProjection;
 
+        out vec3 vWorldPosition;
         out vec3 vNormal;
 
         void main()
         {
+            vec4 world = uModel * vec4(aPosition, 1.0);
+            vWorldPosition = world.xyz;
             vNormal = mat3(uNormalMatrix) * aNormal;
-            gl_Position = uViewProjection * uModel * vec4(aPosition, 1.0);
+            gl_Position = uViewProjection * world;
         }
         """;
 
-    // Simple directional light + sky ambient: enough to read shapes in the editor.
+    // URP's Lit (simplified BRDF from URP's BRDF.hlsl): main light, up to 8 point / spot lights
+    // with URP's attenuation, and ambient light from the sky as a three-color gradient.
+    // Writes linear HDR color.
     public const string MeshFragment = """
         #version 330 core
+        in vec3 vWorldPosition;
         in vec3 vNormal;
 
-        uniform vec4 uColor;
-        uniform vec3 uLightDirection;
-        uniform int uUnlit;
+        uniform vec4 uBaseColor;
+        uniform float uMetallic;
+        uniform float uSmoothness;
 
+        uniform vec3 uCameraPosition;
+        uniform vec3 uToSun;
+        uniform vec3 uSunColor;
+        uniform vec3 uAmbientTop;
+        uniform vec3 uAmbientHorizon;
+        uniform vec3 uAmbientBottom;
+
+        uniform int uLightCount;
+        uniform vec4 uLightPositionRange[8];   // xyz position, w range
+        uniform vec4 uLightColor[8];
+        uniform vec4 uLightDirectionCos[8];    // xyz spot direction, w cos(outer) (-1: point light)
+        uniform float uLightCosInner[8];
+
+        out vec4 fragColor;
+
+        struct Brdf
+        {
+            vec3 diffuse;
+            vec3 specular;
+            float roughness2;
+            float normalizationTerm;
+            float grazingTerm;
+            float roughness2MinusOne;
+        };
+
+        vec3 Ambient(vec3 n)
+        {
+            float y = n.y;
+            vec3 upper = mix(uAmbientHorizon, uAmbientTop, clamp(y, 0.0, 1.0));
+            vec3 lower = mix(uAmbientHorizon, uAmbientBottom, clamp(-y, 0.0, 1.0));
+            return y >= 0.0 ? upper : lower;
+        }
+
+        vec3 DirectLight(Brdf brdf, vec3 n, vec3 v, vec3 l, vec3 radiance)
+        {
+            vec3 h = normalize(l + v);
+            float nh = clamp(dot(n, h), 0.0, 1.0);
+            float lh = clamp(dot(l, h), 0.0, 1.0);
+            float d = nh * nh * brdf.roughness2MinusOne + 1.00001;
+            float specularTerm = brdf.roughness2 / ((d * d) * max(0.1, lh * lh) * brdf.normalizationTerm);
+            return (brdf.diffuse + brdf.specular * specularTerm) * radiance;
+        }
+
+        void main()
+        {
+            vec3 n = normalize(vNormal);
+            if (!gl_FrontFacing)
+                n = -n;
+            vec3 v = normalize(uCameraPosition - vWorldPosition);
+            vec3 albedo = uBaseColor.rgb;
+
+            float oneMinusReflectivity = 0.96 * (1.0 - uMetallic);
+            float perceptualRoughness = 1.0 - uSmoothness;
+            float roughness = max(perceptualRoughness * perceptualRoughness, 0.0078125);
+            Brdf brdf;
+            brdf.diffuse = albedo * oneMinusReflectivity;
+            brdf.specular = mix(vec3(0.04), albedo, uMetallic);
+            brdf.roughness2 = roughness * roughness;
+            brdf.normalizationTerm = roughness * 4.0 + 2.0;
+            brdf.grazingTerm = clamp(uSmoothness + (1.0 - oneMinusReflectivity), 0.0, 1.0);
+            brdf.roughness2MinusOne = brdf.roughness2 - 1.0;
+
+            // Indirect light: the sky's gradient for diffuse, and in the reflected direction for specular.
+            float nv = clamp(dot(n, v), 0.0, 1.0);
+            float fresnel = pow(1.0 - nv, 4.0);
+            vec3 reflected = reflect(-v, n);
+            vec3 indirectSpecular = mix(Ambient(reflected), Ambient(n), perceptualRoughness);
+            vec3 color = Ambient(n) * brdf.diffuse
+                + indirectSpecular * (1.0 / (brdf.roughness2 + 1.0)) * mix(brdf.specular, vec3(brdf.grazingTerm), fresnel);
+
+            // Main light.
+            float nl = clamp(dot(n, uToSun), 0.0, 1.0);
+            color += DirectLight(brdf, n, v, uToSun, uSunColor * nl);
+
+            // Additional lights.
+            for (int i = 0; i < uLightCount; i++)
+            {
+                vec3 toLight = uLightPositionRange[i].xyz - vWorldPosition;
+                float distanceSq = max(dot(toLight, toLight), 1e-4);
+                vec3 l = toLight * inversesqrt(distanceSq);
+                float range = uLightPositionRange[i].w;
+                float factor = distanceSq / (range * range);
+                float smoothFactor = clamp(1.0 - factor * factor, 0.0, 1.0);
+                float attenuation = smoothFactor * smoothFactor / distanceSq;
+
+                float cosOuter = uLightDirectionCos[i].w;
+                if (cosOuter > -1.0)
+                {
+                    float invAngleRange = 1.0 / max(uLightCosInner[i] - cosOuter, 0.001);
+                    float spot = clamp((dot(uLightDirectionCos[i].xyz, -l) - cosOuter) * invAngleRange, 0.0, 1.0);
+                    attenuation *= spot * spot;
+                }
+                float nli = clamp(dot(n, l), 0.0, 1.0);
+                color += DirectLight(brdf, n, v, l, uLightColor[i].rgb * attenuation * nli);
+            }
+
+            fragColor = vec4(color, uBaseColor.a);
+        }
+        """;
+
+    public const string UnlitFragment = """
+        #version 330 core
+        uniform vec4 uBaseColor;
         out vec4 fragColor;
 
         void main()
         {
-            if (uUnlit != 0)
-            {
-                fragColor = uColor;
-                return;
-            }
-            float diffuse = max(dot(normalize(vNormal), -uLightDirection), 0.0);
-            float sky = 0.5 + 0.5 * normalize(vNormal).y;
-            vec3 color = uColor.rgb * (0.12 + 0.13 * sky + 0.75 * diffuse);
-            // Lighting happens in linear space; the render target stores sRGB.
-            fragColor = vec4(pow(color, vec3(1.0 / 2.2)), uColor.a);
+            fragColor = uBaseColor;
         }
         """;
 
@@ -104,7 +204,8 @@ internal static class Shaders
 
             if (color.a <= 0.001)
                 discard;
-            fragColor = color;
+            // The colors above are display (gamma) values; the scene buffer is linear.
+            fragColor = vec4(pow(color.rgb, vec3(2.2)), color.a);
         }
         """;
 }

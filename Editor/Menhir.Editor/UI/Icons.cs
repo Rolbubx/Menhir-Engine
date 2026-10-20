@@ -42,6 +42,10 @@ public static class Icons
     public const string ListView = "\ue10c"; // list
     public const string GridView = "\ue105"; // layout-grid
     public const string Collapse = "\ue104"; // layers
+    public const string Layers = "\ue104";
+    public const string Light = "\ue17c"; // sun
+    public const string Sky = "\ue231"; // mountain
+    public const string PostProcess = "\ue1dd"; // palette
 
     // Log levels
     public const string Info = "\ue0fe";

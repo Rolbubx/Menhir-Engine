@@ -45,7 +45,7 @@ Run the unit tests with `dotnet test`.
 
 A project is a folder with `Assets/` (committed, with the `.meta` files), `ProjectSettings/`
 (committed) and `Cache/` (git-ignored; e.g. which scene to reopen). **New Project** creates that
-layout plus an empty `Assets/Scenes/Main.scene` and a `.gitignore`. The editor reopens a project's
+layout plus `Assets/Scenes/Main.scene` (a sun, the sky and a global volume) and a `.gitignore`. The editor reopens a project's
 last scene.
 
 | Shortcut       | Action                                    |
@@ -100,6 +100,35 @@ A component whose type no longer exists is kept as is and saved back unchanged.
 | Shift                    | Move 3× faster            |
 | Mouse wheel              | Change fly speed          |
 
+**Effects** (top right of the viewport) shows or hides the skybox, post-processing and the grid.
+
+### Rendering
+
+The viewport renders like URP: scenes are lit and drawn in HDR, then post-processed.
+
+- **Light** component: directional, point or spot. The first directional light is the sun (it also
+  places the sun in the sky); up to 8 point / spot lights light each object. Lights shine along the
+  entity's forward axis (-Z). No shadows yet.
+- **Mesh Renderer**: base color, metallic and smoothness, shaded with URP Lit's BRDF.
+- **Procedural Skybox** component: Unity's Skybox/Procedural (Rayleigh and Mie scattering), with the
+  same settings and defaults (sun disk, sun size and convergence, atmosphere thickness, sky tint, ground
+  color, exposure). The sky also gives the ambient light. Scenes without one use the defaults.
+- **Post-processing**: URP's volume overrides are components (Add Component → Post-processing),
+  usually on a "Global Volume" entity; the checkbox in a component's header turns it off:
+  Bloom, Channel Mixer, Chromatic Aberration, Color Adjustments, Color Curves, Color Lookup,
+  Depth Of Field (Gaussian and Bokeh), Film Grain, Lens Distortion, Lift Gamma Gain, Motion Blur
+  (camera), Panini Projection, Shadows Midtones Highlights, Split Toning, Tonemapping (Neutral, ACES),
+  Vignette, White Balance. Settings and defaults follow URP.
+- New scenes start like a URP scene: a Directional Light, an Environment (the sky) and a Global Volume
+  with ACES tonemapping, a little bloom and a vignette.
+- Color Lookup takes a PNG strip of N tiles of N×N (e.g. 1024×32); `Samples/Sandbox/Assets/Textures/NeutralLUT32.png`
+  is a neutral one to grade in an image editor.
+
+Differences with URP: one global volume (the first active effect of each kind is used, no blending
+or local volumes), no Bloom dirt texture, generated film grain textures instead of Unity's, ACES uses
+Stephen Hill's fit of the RRT + ODT, and the master / RGB curves apply to the display range after
+tonemapping.
+
 ### Hierarchy
 
 - Click to select (the selection is outlined in orange in the viewport); click the empty area to deselect
@@ -114,7 +143,9 @@ A component whose type no longer exists is kept as is and saved back unchanged.
 - Rotation is shown as Euler angles in degrees, applied Z, then X, then Y (like Unity)
 - Drag a number to change it, or Ctrl+click / double-click it to type a value
 - Components are drawn by reflection: every public property with a public getter and setter is shown,
-  unless marked `[HideInInspector]`; a `Vector4` marked `[Color]` gets a color picker
+  unless marked `[HideInInspector]`. Attributes pick the widget: `[Color]` (color bar and picker),
+  `[Range(min, max)]` (slider), `[Min]`, `[Trackball]` (tint + offset), `[TextureAsset]` (texture picker),
+  `[Tooltip]`; color curves get a small curve editor (drag points, double-click to add, right-click to remove)
 - **Add Component** (under the components) lists the component types, with a search field;
   the **⋮** button or a right-click on a component's header removes it (both can be undone)
 

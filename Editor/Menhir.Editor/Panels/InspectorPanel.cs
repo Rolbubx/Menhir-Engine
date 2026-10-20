@@ -1,10 +1,12 @@
 using System.Numerics;
+using System.Reflection;
 using ImGuiNET;
 using Menhir.Editor.Assets;
 using Menhir.Editor.Commands;
 using Menhir.Editor.Inspector;
 using Menhir.Editor.Inspection;
 using Menhir.Editor.Mathematics;
+using Menhir.Editor.PostProcessing;
 using Menhir.Editor.Scenes;
 using Menhir.Editor.UI;
 
@@ -21,6 +23,9 @@ public sealed class InspectorPanel : EditorPanel
     // Scene changes from menus are applied after the components are drawn, so the list is not
     // modified while it is being iterated.
     private Action? _pendingChange;
+
+    private static readonly PropertyInfo ActiveProperty =
+        typeof(PostProcessEffect).GetProperty(nameof(PostProcessEffect.Active))!;
 
     private string _componentSearch = "";
     private string _nameBuffer = "";
@@ -81,10 +86,16 @@ public sealed class InspectorPanel : EditorPanel
             else
             {
                 Type type = component.GetType();
-                if (ComponentHeader.Draw("component", ComponentDrawer.IconFor(type), EditorTheme.Text,
-                        InspectableProperties.NicifyName(type.Name), "##componentMenu"))
+                bool? active = (component as PostProcessEffect)?.Active;
+                bool open = ComponentHeader.Draw("component", ComponentDrawer.IconFor(type), EditorTheme.Text,
+                    InspectableProperties.NicifyName(type.Name), "##componentMenu", active, out bool toggled);
+                if (toggled && component is PostProcessEffect effect)
+                    _context.Execute(new SetPropertyCommand(effect, ActiveProperty, !effect.Active));
+                if (open)
                 {
-                    ComponentDrawer.Draw(component, _context.Execute);
+                    ImGui.BeginDisabled(active == false);
+                    ComponentDrawer.Draw(component, _context.Execute, _context.Project?.Assets);
+                    ImGui.EndDisabled();
                 }
             }
             DrawComponentMenu(entity, component);
@@ -131,25 +142,37 @@ public sealed class InspectorPanel : EditorPanel
         ImGui.InputTextWithHint("##search", $"{Icons.Search}  Search", ref _componentSearch, 64);
         ImGui.Separator();
 
-        IEnumerable<Type> types = ComponentTypes.All
+        // Grouped by category (Rendering, Post-processing, then the rest), like Unity's menu.
+        var groups = ComponentTypes.All
             .Where(t => InspectableProperties.NicifyName(t.Name).Contains(_componentSearch.Trim(), StringComparison.OrdinalIgnoreCase))
-            .OrderBy(t => t.Name, StringComparer.Ordinal);
+            .GroupBy(t => t.GetCustomAttribute<ComponentCategoryAttribute>()?.Name ?? "Other")
+            .OrderBy(g => g.Key switch { "Rendering" => 0, "Post-processing" => 1, _ => 2 })
+            .ThenBy(g => g.Key, StringComparer.Ordinal);
         bool any = false;
-        foreach (Type type in types)
+        foreach (var group in groups)
         {
+            ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.TextDim);
+            ImGui.SeparatorText(group.Key);
+            ImGui.PopStyleColor();
             any = true;
-            // One of each kind per entity, for now.
-            bool present = entity.Components.Any(c => c.GetType() == type);
-            if (ImGui.Selectable($"{ComponentDrawer.IconFor(type)}  {InspectableProperties.NicifyName(type.Name)}", false,
-                    present ? ImGuiSelectableFlags.Disabled : ImGuiSelectableFlags.None))
-            {
-                Component component = ComponentTypes.Create(ComponentTypes.GetName(type))!;
-                _pendingChange = () => _context.Execute(new AddComponentCommand(entity, component));
-            }
+            foreach (Type type in group.OrderBy(t => t.Name, StringComparer.Ordinal))
+                DrawAddComponentItem(entity, type);
         }
         if (!any)
             ImGui.TextDisabled("No component matches.");
         ImGui.EndPopup();
+    }
+
+    private void DrawAddComponentItem(Entity entity, Type type)
+    {
+        // One of each kind per entity, for now.
+        bool present = entity.Components.Any(c => c.GetType() == type);
+        if (ImGui.Selectable($"{ComponentDrawer.IconFor(type)}  {InspectableProperties.NicifyName(type.Name)}", false,
+                present ? ImGuiSelectableFlags.Disabled : ImGuiSelectableFlags.None))
+        {
+            Component component = ComponentTypes.Create(ComponentTypes.GetName(type))!;
+            _pendingChange = () => _context.Execute(new AddComponentCommand(entity, component));
+        }
     }
 
     private static void DrawAsset(AssetEntry asset)

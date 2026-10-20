@@ -65,6 +65,34 @@ internal sealed unsafe class GLShaderProgram : IDisposable
 
     public void Set(string name, Vector4 value) => _gl.Uniform4(Location(name), value.X, value.Y, value.Z, value.W);
 
+    public void Set(string name, Vector2 value) => _gl.Uniform2(Location(name), value.X, value.Y);
+
+    public void Set(string name, ReadOnlySpan<Vector2> values)
+    {
+        fixed (Vector2* ptr = values)
+            _gl.Uniform2(Location(name), (uint)values.Length, (float*)ptr);
+    }
+
+    public void Set(string name, ReadOnlySpan<Vector4> values)
+    {
+        fixed (Vector4* ptr = values)
+            _gl.Uniform4(Location(name), (uint)values.Length, (float*)ptr);
+    }
+
+    public void Set(string name, ReadOnlySpan<float> values)
+    {
+        fixed (float* ptr = values)
+            _gl.Uniform1(Location(name), (uint)values.Length, ptr);
+    }
+
+    /// <summary>Binds <paramref name="texture"/> to texture unit <paramref name="unit"/> for the sampler <paramref name="name"/>.</summary>
+    public void SetTexture(string name, int unit, uint texture)
+    {
+        _gl.ActiveTexture(TextureUnit.Texture0 + unit);
+        _gl.BindTexture(TextureTarget.Texture2D, texture);
+        _gl.Uniform1(Location(name), unit);
+    }
+
     private int Location(string name)
     {
         if (!_uniformLocations.TryGetValue(name, out int location))

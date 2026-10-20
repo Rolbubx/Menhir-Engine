@@ -1,4 +1,5 @@
 using Menhir.Editor.Assets;
+using Menhir.Editor.Commands;
 using Menhir.Editor.Projects;
 using Menhir.Editor.Scenes;
 using Menhir.Editor.Serialization;
@@ -32,10 +33,13 @@ public sealed class EditorContext
     public string? ActiveScenePath =>
         ActiveSceneGuid is { } guid ? Project?.Assets.FindByGuid(guid)?.Path : null;
 
-    /// <summary>True when the active scene has changes that are not saved.</summary>
-    public bool IsSceneDirty { get; private set; }
+    /// <summary>Undo/redo steps of the active scene. Every scene edit goes through <see cref="Execute"/>.</summary>
+    public CommandHistory History { get; } = new();
 
-    public void MarkSceneDirty() => IsSceneDirty = true;
+    /// <summary>True when the active scene has changes that are not saved.</summary>
+    public bool IsSceneDirty => History.IsDirty;
+
+    public void Execute(ICommand command) => History.Execute(command);
 
     // One thing is selected at a time: selecting an entity clears the asset selection and vice versa.
 
@@ -96,7 +100,7 @@ public sealed class EditorContext
     {
         ActiveScene = new Scene();
         ActiveSceneGuid = null;
-        IsSceneDirty = false;
+        History.Clear();
     }
 
     /// <summary>Loads a scene file. Returns false (and logs why) when it cannot be read.</summary>
@@ -120,7 +124,7 @@ public sealed class EditorContext
         scene.Name = Path.GetFileNameWithoutExtension(asset.Name);
         ActiveScene = scene;
         ActiveSceneGuid = asset.Guid;
-        IsSceneDirty = false;
+        History.Clear();
         RememberActiveScene();
         Console.WriteLine($"Opened scene {asset.Path}");
         return true;
@@ -131,7 +135,7 @@ public sealed class EditorContext
     {
         string assetPath = ActiveScenePath ?? throw new InvalidOperationException("The scene has no file yet.");
         File.WriteAllText(Project!.Assets.ToAbsolutePath(assetPath), SceneSerializer.Serialize(ActiveScene));
-        IsSceneDirty = false;
+        History.MarkSaved();
         Console.WriteLine($"Saved scene {assetPath}");
     }
 
@@ -156,7 +160,7 @@ public sealed class EditorContext
         RefreshAssets();
         ActiveScene.Name = name;
         ActiveSceneGuid = assets.FindByPath(assetPath)?.Guid;
-        IsSceneDirty = false;
+        History.MarkSaved();
         RememberActiveScene();
         Console.WriteLine($"Saved scene {assetPath}");
     }

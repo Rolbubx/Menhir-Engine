@@ -43,6 +43,13 @@ layout plus an empty `Assets/Scenes/Main.scene` and a `.gitignore`.
 | Ctrl+N         | New scene                                 |
 | Ctrl+S         | Save scene (asks for a name the first time) |
 | Ctrl+Shift+S   | Save scene as                             |
+| Ctrl+Z         | Undo                                      |
+| Ctrl+Y / Ctrl+Shift+Z | Redo                               |
+
+Every scene edit (create, delete, rename, reparent, Transform and component changes) is an undoable
+command; a whole slider drag or text edit is one undo step. The history is per scene and is cleared
+when another scene is opened. Asset operations in the Project panel (rename, move, delete) are not
+undoable. While a text field is focused, Ctrl+Z undoes the typing in that field instead.
 
 Open a scene from **File → Open Scene** or by double-clicking it in the Project panel. The editor
 asks before discarding unsaved changes (also when closing the window).

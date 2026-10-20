@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
 using ImGuiNET;
+using Menhir.Editor.Commands;
 using Menhir.Editor.Scenes;
 
 namespace Menhir.Editor.Panels;
@@ -118,11 +119,7 @@ public sealed class HierarchyPanel : EditorPanel
             if (Scene.Find(draggedId) is { } dragged && dragged.ParentId != newParentId &&
                 Scene.CanReparent(dragged, newParentId))
             {
-                _pendingChange = () =>
-                {
-                    Scene.SetParent(dragged, newParentId);
-                    _context.MarkSceneDirty();
-                };
+                _pendingChange = () => _context.Execute(new ReparentEntityCommand(Scene, dragged, newParentId));
             }
         }
         ImGui.EndDragDropTarget();
@@ -219,27 +216,22 @@ public sealed class HierarchyPanel : EditorPanel
         {
             string name = _renameBuffer.Trim();
             if (name.Length > 0 && name != entity.Name)
-            {
-                entity.Name = name;
-                _context.MarkSceneDirty();
-            }
+                _context.Execute(new RenameEntityCommand(entity, name));
             _renamingId = 0;
         }
     }
 
     private void Create(string name, long parentId, bool withCube)
     {
-        Entity entity = Scene.CreateEntity(name, parentId);
-        if (withCube)
-            entity.Components.Add(new MeshRenderer());
-        _context.SelectedEntityId = entity.LocalId;
-        _context.MarkSceneDirty();
+        var command = new CreateEntityCommand(Scene, name, parentId,
+            withCube ? () => [new MeshRenderer()] : null);
+        _context.Execute(command);
+        _context.SelectedEntityId = command.Entity!.LocalId;
     }
 
     private void Delete(Entity entity)
     {
-        Scene.DestroyEntity(entity);
-        _context.MarkSceneDirty();
+        _context.Execute(new DeleteEntityCommand(Scene, entity));
         if (_context.SelectedEntity == null)
             _context.SelectedEntityId = 0;
         if (Scene.Find(_renamingId) == null)

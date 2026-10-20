@@ -5,6 +5,7 @@ using Menhir.Editor.Projects;
 using Menhir.Editor.Rendering;
 using Menhir.Editor.Rendering.OpenGL;
 using Menhir.Editor.Assets;
+using Menhir.Editor.Commands;
 using Menhir.Editor.UI;
 using Menhir.Editor.UI.Dialogs;
 using Silk.NET.Input;
@@ -218,6 +219,10 @@ public sealed class EditorApplication : IDisposable
         foreach (EditorPanel panel in _panels)
             panel.Draw();
 
+        // Commands from one mouse drag or one text edit merge into one undo step.
+        if (!ImGui.IsAnyItemActive())
+            _context.History.EndMerge();
+
         _unsavedChangesDialog.Draw();
         _saveSceneDialog.Draw();
         _openProjectDialog.Draw();
@@ -253,8 +258,11 @@ public sealed class EditorApplication : IDisposable
 
         if (ImGui.BeginMenu("Edit"))
         {
-            ImGui.MenuItem("Undo", "Ctrl+Z", false, false);
-            ImGui.MenuItem("Redo", "Ctrl+Y", false, false);
+            CommandHistory history = _context.History;
+            if (ImGui.MenuItem(history.UndoName is { } undo ? $"Undo {undo}" : "Undo", "Ctrl+Z", false, history.CanUndo))
+                history.Undo();
+            if (ImGui.MenuItem(history.RedoName is { } redo ? $"Redo {redo}" : "Redo", "Ctrl+Y", false, history.CanRedo))
+                history.Redo();
             ImGui.EndMenu();
         }
 
@@ -336,7 +344,19 @@ public sealed class EditorApplication : IDisposable
 
     private void HandleShortcuts()
     {
-        if (ModalDialog.AnyOpen || _context.Project == null)
+        if (ModalDialog.AnyOpen)
+            return;
+
+        // A focused text field has its own undo (Ctrl+Z inside the text).
+        if (!ImGui.GetIO().WantTextInput)
+        {
+            if (EditorInput.Shortcut(ImGuiKey.Z))
+                _context.History.Undo();
+            else if (EditorInput.Shortcut(ImGuiKey.Y) || EditorInput.Shortcut(ImGuiKey.Z, shift: true))
+                _context.History.Redo();
+        }
+
+        if (_context.Project == null)
             return;
 
         if (EditorInput.Shortcut(ImGuiKey.S))

@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Reflection;
 using ImGuiNET;
+using Menhir.Editor.Commands;
 using Menhir.Editor.Inspection;
 using Menhir.Editor.Mathematics;
 using Menhir.Editor.Scenes;
@@ -10,36 +11,27 @@ namespace Menhir.Editor.Inspector;
 /// <summary>
 /// Draws any component by reflection: every property found by
 /// <see cref="InspectableProperties"/> gets a widget picked from its type.
+/// Edits are applied as <see cref="SetPropertyCommand"/>s so they can be undone.
 /// </summary>
 public static class ComponentDrawer
 {
-    /// <summary>Draws the component's properties. Returns true when one was edited.</summary>
-    public static bool Draw(Component component)
+    public static void Draw(Component component, Action<ICommand> execute)
     {
         if (!PropertyTable.Begin("##properties"))
-            return false;
+            return;
 
-        bool changed = false;
         foreach (PropertyInfo property in InspectableProperties.Get(component.GetType()))
         {
             PropertyTable.Row(InspectableProperties.NicifyName(property.Name));
             ImGui.PushID(property.Name);
             object? value = property.GetValue(component);
             if (DrawValue(property, value, out object? newValue))
-            {
-                SetValue(component, property, newValue);
-                changed = true;
-            }
+                execute(new SetPropertyCommand(component, property, newValue));
             ImGui.PopID();
         }
 
         PropertyTable.End();
-        return changed;
     }
-
-    // Single place where inspector edits reach a component (undo commands go here in Phase 7).
-    private static void SetValue(Component component, PropertyInfo property, object? value) =>
-        property.SetValue(component, value);
 
     /// <summary>Draws the widget for one value. Returns true with the new value when it was edited.</summary>
     private static bool DrawValue(PropertyInfo property, object? value, out object? newValue)

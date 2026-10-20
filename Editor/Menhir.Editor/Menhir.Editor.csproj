@@ -25,6 +25,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Menhir.Editor.Core\Menhir.Editor.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="Resources\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

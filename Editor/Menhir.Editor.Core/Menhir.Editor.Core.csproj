@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Editor logic with no UI, windowing or GPU dependency, so it can be unit tested. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Menhir.Editor</RootNamespace>
+  </PropertyGroup>
+
+</Project>

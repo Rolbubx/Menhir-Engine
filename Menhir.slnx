@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/Editor/">
+    <Project Path="Editor/Menhir.Editor.Core/Menhir.Editor.Core.csproj" />
+    <Project Path="Editor/Menhir.Editor.Tests/Menhir.Editor.Tests.csproj" />
     <Project Path="Editor/Menhir.Editor/Menhir.Editor.csproj" />
   </Folder>
 </Solution>

@@ -74,7 +74,7 @@ public sealed class EditorApplication : IDisposable
         [
             new ViewportPanel(_context, _renderer, SetCursorCaptured),
             new HierarchyPanel(_context),
-            new InspectorPanel(),
+            new InspectorPanel(_context),
             new ProjectPanel(),
             new ConsolePanel(),
         ];

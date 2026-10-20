@@ -41,6 +41,14 @@ Run the unit tests with `dotnet test`.
 - Double-click or **F2** to rename (**Enter** to confirm, **Esc** to cancel); **Del** deletes with children
 - Drag an entity onto another to reparent it (its world position is kept); drop it in the empty area to make it a root
 
+### Inspector
+
+- Edit the selected entity's name (applied when the field loses focus) and its Transform
+- Rotation is shown as Euler angles in degrees, applied Z, then X, then Y (like Unity)
+- Drag a number to change it, or Ctrl+click / double-click it to type a value
+- Components are drawn by reflection: every public property with a public getter and setter is shown,
+  unless marked `[HideInInspector]`; a `Vector4` marked `[Color]` gets a color picker
+
 World conventions: right-handed, Y up, 1 unit = 1 meter.
 
 The editor font is [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), distributed under the

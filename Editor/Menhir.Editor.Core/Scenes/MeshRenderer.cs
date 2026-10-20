@@ -1,4 +1,5 @@
 using System.Numerics;
+using Menhir.Editor.Inspection;
 
 namespace Menhir.Editor.Scenes;
 
@@ -14,5 +15,6 @@ public sealed class MeshRenderer : Component
     public PrimitiveMesh Mesh { get; set; } = PrimitiveMesh.Cube;
 
     /// <summary>Linear RGBA color.</summary>
+    [Color]
     public Vector4 Color { get; set; } = new(0.6f, 0.6f, 0.6f, 1f);
 }

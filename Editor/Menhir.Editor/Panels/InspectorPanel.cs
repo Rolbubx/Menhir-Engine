@@ -1,8 +1,123 @@
+using System.Numerics;
+using ImGuiNET;
+using Menhir.Editor.Inspector;
+using Menhir.Editor.Inspection;
+using Menhir.Editor.Mathematics;
+using Menhir.Editor.Scenes;
+
 namespace Menhir.Editor.Panels;
 
+/// <summary>
+/// Properties of the selected entity: name, Transform, then each component drawn by
+/// reflection (<see cref="ComponentDrawer"/>).
+/// </summary>
 public sealed class InspectorPanel : EditorPanel
 {
+    private readonly EditorContext _context;
+
+    private string _nameBuffer = "";
+    private long _editingNameId;
+
+    // Euler angles are cached while the rotation is unchanged, so values the user typed
+    // (e.g. 180° yaw, or pitch past 90°) are not replaced by an equivalent set every frame.
+    private long _eulerEntityId;
+    private Quaternion _eulerSource;
+    private Vector3 _euler;
+
+    public InspectorPanel(EditorContext context)
+    {
+        _context = context;
+    }
+
     public override string Title => "Inspector";
 
-    protected override void DrawContent() => Placeholder("Selected entity properties — Phase 4.");
+    protected override void DrawContent()
+    {
+        if (_context.SelectedEntity is { } entity)
+            DrawEntity(entity);
+        else
+            Placeholder("Nothing selected.");
+    }
+
+    private void DrawEntity(Entity entity)
+    {
+        ImGui.PushID($"entity{entity.LocalId}");
+
+        DrawName(entity);
+        ImGui.Spacing();
+
+        if (ImGui.CollapsingHeader("Transform", ImGuiTreeNodeFlags.DefaultOpen))
+            DrawTransform(entity);
+
+        for (int i = 0; i < entity.Components.Count; i++)
+        {
+            Component component = entity.Components[i];
+            string title = InspectableProperties.NicifyName(component.GetType().Name);
+            ImGui.PushID(i);
+            if (ImGui.CollapsingHeader(title, ImGuiTreeNodeFlags.DefaultOpen))
+                ComponentDrawer.Draw(component);
+            ImGui.PopID();
+        }
+
+        ImGui.PopID();
+    }
+
+    /// <summary>Edited in a buffer and applied when the field loses focus, so an empty name never shows up.</summary>
+    private void DrawName(Entity entity)
+    {
+        if (_editingNameId != entity.LocalId)
+            _nameBuffer = entity.Name;
+
+        string id = $"#{entity.LocalId}";
+        ImGui.SetNextItemWidth(-(ImGui.CalcTextSize(id).X + ImGui.GetStyle().ItemSpacing.X));
+        ImGui.InputText("##name", ref _nameBuffer, 256);
+        _editingNameId = ImGui.IsItemActive() ? entity.LocalId : 0;
+        if (ImGui.IsItemDeactivatedAfterEdit())
+        {
+            string name = _nameBuffer.Trim();
+            if (name.Length > 0)
+                entity.Name = name;
+        }
+
+        ImGui.SameLine();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextDisabled(id);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Local ID of the entity in its scene");
+    }
+
+    private void DrawTransform(Entity entity)
+    {
+        if (!PropertyTable.Begin("##transform"))
+            return;
+
+        Transform transform = entity.Transform;
+
+        Vector3 position = transform.Position;
+        PropertyTable.Row("Position");
+        if (ImGui.DragFloat3("##position", ref position, 0.05f, 0, 0, "%.3f"))
+            transform.Position = position;
+
+        if (entity.LocalId != _eulerEntityId || transform.Rotation != _eulerSource)
+        {
+            _eulerEntityId = entity.LocalId;
+            _eulerSource = transform.Rotation;
+            _euler = EulerAngles.FromQuaternion(transform.Rotation);
+        }
+        Vector3 euler = _euler;
+        PropertyTable.Row("Rotation");
+        if (ImGui.DragFloat3("##rotation", ref euler, 0.5f, 0, 0, "%.2f°"))
+        {
+            transform.Rotation = EulerAngles.ToQuaternion(euler);
+            _eulerSource = transform.Rotation;
+            _euler = euler;
+        }
+
+        Vector3 scale = transform.Scale;
+        PropertyTable.Row("Scale");
+        if (ImGui.DragFloat3("##scale", ref scale, 0.01f, 0, 0, "%.3f"))
+            transform.Scale = scale;
+
+        PropertyTable.End();
+    }
 }

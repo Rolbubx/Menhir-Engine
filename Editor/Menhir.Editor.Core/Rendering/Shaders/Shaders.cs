@@ -1,6 +1,6 @@
 namespace Menhir.Editor.Rendering.OpenGL;
 
-internal static class Shaders
+public static class Shaders
 {
     public const string MeshVertex = """
         #version 330 core

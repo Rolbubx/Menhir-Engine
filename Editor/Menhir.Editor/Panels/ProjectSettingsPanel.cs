@@ -62,6 +62,18 @@ public sealed class ProjectSettingsPanel : EditorPanel
             ImGui.EndPopup();
         }
 
+        if (ComponentHeader.Draw("build", Icons.Settings, EditorTheme.Text, "Build", menuId: "##buildMenu"))
+            DrawBuildSettings(project);
+        if (ImGui.BeginPopup("##buildMenu"))
+        {
+            if (ImGui.MenuItem("Reset to Defaults"))
+            {
+                settings.Build = new BuildSettings();
+                _dirty = true;
+            }
+            ImGui.EndPopup();
+        }
+
         // Saved once a drag or text edit is finished, not on every frame of it.
         if (_dirty && !ImGui.IsAnyItemActive())
         {
@@ -76,5 +88,44 @@ public sealed class ProjectSettingsPanel : EditorPanel
                 _dirty = false;
             }
         }
+    }
+
+    /// <summary>The window size and compiler, then the scenes in the build (all of them when none is ticked).</summary>
+    private void DrawBuildSettings(Project project)
+    {
+        BuildSettings build = project.Settings.Build;
+        ComponentDrawer.Draw(build, (property, value) =>
+        {
+            property.SetValue(build, value);
+            _dirty = true;
+        }, project.Assets);
+
+        ImGui.Spacing();
+        ImGui.TextDisabled(build.Scenes.Count == 0
+            ? "Scenes in the build: all (the open one first). Tick some to choose; the first ticked one starts the game."
+            : "Scenes in the build, in this order (the first starts the game):");
+        foreach (string path in _context.FindSceneAssets().Select(a => a.Path))
+        {
+            bool included = build.Scenes.Contains(path);
+            if (ImGui.Checkbox(path, ref included))
+            {
+                if (included)
+                    build.Scenes.Add(path);
+                else
+                    build.Scenes.Remove(path);
+                _dirty = true;
+            }
+        }
+        foreach (string missing in build.Scenes.Where(p => _context.FindSceneAssets().All(a => a.Path != p)).ToList())
+        {
+            ImGui.TextColored(EditorTheme.Warning, $"Missing: {missing}");
+            ImGui.SameLine();
+            if (ImGui.SmallButton($"Remove##{missing}"))
+            {
+                build.Scenes.Remove(missing);
+                _dirty = true;
+            }
+        }
+        ImGui.TextDisabled($"Output: {Path.Combine(project.BuildDirectory, Build.GameBuild.SafeName(project.Name))}");
     }
 }

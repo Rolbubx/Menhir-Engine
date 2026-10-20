@@ -4,7 +4,7 @@ namespace Menhir.Editor.Rendering.OpenGL;
 /// Post-processing passes, after URP's (PostProcessPass, UberPost, LutBuilderHdr) and, for the
 /// bokeh depth of field, Unity's Post Processing Stack v2. All draw a full-screen triangle.
 /// </summary>
-internal static class PostProcessShaders
+public static class PostProcessShaders
 {
     public const string FullscreenVertex = """
         #version 330 core

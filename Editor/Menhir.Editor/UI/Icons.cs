@@ -45,6 +45,7 @@ public static class Icons
     public const string Collapse = "\ue104"; // layers
     public const string Layers = "\ue104";
     public const string Light = "\ue17c"; // sun
+    public const string Camera = "\ue068";
     public const string Sky = "\ue231"; // mountain
     public const string PostProcess = "\ue1dd"; // palette
 

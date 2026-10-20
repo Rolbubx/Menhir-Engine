@@ -5,6 +5,7 @@ using Menhir.Editor.Projects;
 using Menhir.Editor.Rendering;
 using Menhir.Editor.Rendering.OpenGL;
 using Menhir.Editor.Assets;
+using Menhir.Editor.Building;
 using Menhir.Editor.Commands;
 using Menhir.Editor.Logging;
 using Menhir.Editor.UI;
@@ -33,6 +34,7 @@ public sealed class EditorApplication : IDisposable
     private readonly UnsavedChangesDialog _unsavedChangesDialog = new();
     private readonly SaveSceneDialog _saveSceneDialog;
     private readonly ProjectHub _hub;
+    private readonly BuildRunner _build;
 
     private GL? _gl;
     private IInputContext? _input;
@@ -60,6 +62,7 @@ public sealed class EditorApplication : IDisposable
         EditorPaths.EnsureConfigDirectory();
         _preferences = EditorPreferences.Load(EditorPaths.PreferencesFile);
         _saveSceneDialog = new SaveSceneDialog(_context);
+        _build = new BuildRunner(_context);
         _statusBar = new StatusBar(Log.Messages, ShowConsole);
         _hub = new ProjectHub(_preferences, OpenProject, ProjectLocator.FindSample());
         OpenStartupProject(args);
@@ -363,6 +366,15 @@ public sealed class EditorApplication : IDisposable
             _saveSceneDialog.Open();
 
         ImGui.Separator();
+        bool canBuild = hasProject && !_build.IsBuilding;
+        if (ImGui.MenuItem(_build.IsBuilding ? "Building..." : "Build", "Ctrl+B", false, canBuild))
+            _build.Start(run: false);
+        if (ImGui.MenuItem("Build And Run", "Ctrl+Shift+B", false, canBuild))
+            _build.Start(run: true);
+        if (ImGui.MenuItem("Build Settings...", null, false, hasProject))
+            ShowPanel<ProjectSettingsPanel>();
+
+        ImGui.Separator();
         if (ImGui.MenuItem("New Project..."))
             ConfirmDiscardChanges(() => _hub.Show(ProjectHub.Page.NewProject));
         if (ImGui.MenuItem("Open Project..."))
@@ -417,6 +429,10 @@ public sealed class EditorApplication : IDisposable
             _saveSceneDialog.Open();
         else if (EditorInput.Shortcut(ImGuiKey.N))
             ConfirmDiscardChanges(_context.NewScene);
+        else if (EditorInput.Shortcut(ImGuiKey.B))
+            _build.Start(run: false);
+        else if (EditorInput.Shortcut(ImGuiKey.B, shift: true))
+            _build.Start(run: true);
     }
 
     private void OnClosing()

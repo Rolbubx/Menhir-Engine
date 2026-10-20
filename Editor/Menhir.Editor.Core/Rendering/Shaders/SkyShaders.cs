@@ -4,7 +4,7 @@ namespace Menhir.Editor.Rendering.OpenGL;
 /// The procedural skybox: the same scattering as <see cref="Lighting.SkyModel"/> (which documents
 /// it), evaluated per pixel, plus the sun disk. Drawn as a full-screen triangle at the far plane.
 /// </summary>
-internal static class SkyShaders
+public static class SkyShaders
 {
     public const string Vertex = """
         #version 330 core

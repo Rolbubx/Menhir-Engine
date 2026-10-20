@@ -1,5 +1,8 @@
 # Build output
 build/
+# Source folders (case-insensitive file systems would match build/)
+!Editor/Menhir.Editor.Core/Build/
+!Editor/Menhir.Editor.Tests/Build/
 bin/
 obj/
 out/

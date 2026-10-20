@@ -1,4 +1,5 @@
 using System.Numerics;
+using Menhir.Editor.PostProcessing;
 using Silk.NET.OpenGL;
 
 namespace Menhir.Editor.Rendering.OpenGL;
@@ -55,6 +56,19 @@ internal sealed unsafe class GLShaderProgram : IDisposable
     {
         fixed (Matrix4x4* ptr = &value)
             _gl.UniformMatrix4(Location(name), 1, false, (float*)ptr);
+    }
+
+    public void Set(in ShaderUniform uniform)
+    {
+        Vector4 v = uniform.Value;
+        switch (uniform.Kind)
+        {
+            case UniformKind.Int: Set(uniform.Name, (int)v.X); break;
+            case UniformKind.Float: Set(uniform.Name, v.X); break;
+            case UniformKind.Vec2: Set(uniform.Name, new Vector2(v.X, v.Y)); break;
+            case UniformKind.Vec3: Set(uniform.Name, new Vector3(v.X, v.Y, v.Z)); break;
+            default: Set(uniform.Name, v); break;
+        }
     }
 
     public void Set(string name, int value) => _gl.Uniform1(Location(name), value);

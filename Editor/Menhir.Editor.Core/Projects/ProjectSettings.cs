@@ -16,4 +16,6 @@ public sealed class ProjectSettings
     public ProjectRemoteSettings? Remote { get; set; }
 
     public RenderingSettings Rendering { get; set; } = new();
+
+    public BuildSettings Build { get; set; } = new();
 }

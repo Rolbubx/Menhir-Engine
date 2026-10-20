@@ -10,12 +10,14 @@ namespace Menhir.Editor.Projects;
 /// <item>Assets/: the game's files, each with a .meta (committed)</item>
 /// <item>ProjectSettings/: project-wide settings (committed)</item>
 /// <item>Cache/: data the editor can rebuild, ignored by git</item>
+/// <item>Build/: the built game (File > Build), ignored by git</item>
 /// </list>
 /// </summary>
 public sealed class Project
 {
     public const string ProjectSettingsFolder = "ProjectSettings";
     public const string CacheFolder = "Cache";
+    public const string BuildFolder = "Build";
 
     private Project(string rootPath, ProjectSettings settings)
     {
@@ -33,6 +35,8 @@ public sealed class Project
     public string ProjectSettingsDirectory => Path.Combine(RootPath, ProjectSettingsFolder);
 
     public string CacheDirectory => Path.Combine(RootPath, CacheFolder);
+
+    public string BuildDirectory => Path.Combine(RootPath, BuildFolder);
 
     public AssetDatabase Assets { get; }
 
@@ -93,7 +97,7 @@ public sealed class Project
         if (remote != null)
             remote.Url = remote.Url.Trim();
         JsonFile.Save(Path.Combine(root, ProjectSettingsFolder, ProjectSettings.FileName), settings);
-        File.WriteAllText(Path.Combine(root, ".gitignore"), $"{CacheFolder}/\n");
+        File.WriteAllText(Path.Combine(root, ".gitignore"), $"{CacheFolder}/\n{BuildFolder}/\n");
         File.WriteAllText(Path.Combine(root, AssetPaths.Root, "Scenes", "Main" + SceneSerializer.Extension),
             SceneSerializer.Serialize(SceneTemplates.CreateDefault()));
 

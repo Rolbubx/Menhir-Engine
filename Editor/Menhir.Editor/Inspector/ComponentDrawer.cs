@@ -25,6 +25,8 @@ public static class ComponentDrawer
             return Icons.MeshRenderer;
         if (type == typeof(Light))
             return Icons.Light;
+        if (type == typeof(Camera))
+            return Icons.Camera;
         if (type == typeof(ProceduralSkybox))
             return Icons.Sky;
         if (type.IsSubclassOf(typeof(PostProcessEffect)))

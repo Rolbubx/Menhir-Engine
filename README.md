@@ -2,11 +2,13 @@
 
 A personal game engine. Games are scripted in C#; the editor runs scripts directly on .NET,
 and the IL→C translator (IL2C) plus a native C runtime will produce the final builds.
+**File → Build** already makes a standalone game: one `main.c` (OpenGL + GLFW, the same rendering as the
+editor) and its `GameData.binchunk` ([Engine/README](Engine/README.md)).
 
 | Folder        | What                                                      |
 |---------------|-----------------------------------------------------------|
 | `Editor/`     | C# editor (Silk.NET + OpenGL 3.3 Core + ImGui docking)    |
-| `Engine/`     | Native C runtime (IL2C runtime, Boehm GC)                 |
+| `Engine/`     | Native C side: game player, IL2C runtime, GLFW, glad, Boehm GC ([README](Engine/README.md)) |
 | `Translator/` | IL2C translator and its custom corlib ([README](Translator/README.md)) |
 | `Samples/`    | Sample projects for testing the editor                    |
 
@@ -45,7 +47,8 @@ Run the unit tests with `dotnet test`.
 
 A project is a folder with `Assets/` (committed, with the `.meta` files), `ProjectSettings/`
 (committed) and `Cache/` (git-ignored; e.g. which scene to reopen). **New Project** creates that
-layout plus `Assets/Scenes/Main.scene` (a sun, the sky and a global volume) and a `.gitignore`. The editor reopens a project's
+layout plus `Assets/Scenes/Main.scene` (a camera, a sun, the sky and a global volume) and a `.gitignore`
+(`Cache/` and `Build/`, where File → Build puts the game). The editor reopens a project's
 last scene.
 
 | Shortcut       | Action                                    |
@@ -53,6 +56,8 @@ last scene.
 | Ctrl+N         | New scene                                 |
 | Ctrl+S         | Save scene (asks for a name the first time) |
 | Ctrl+Shift+S   | Save scene as                             |
+| Ctrl+B         | Build the game (File → Build)             |
+| Ctrl+Shift+B   | Build and run the game                    |
 | Ctrl+Z         | Undo                                      |
 | Ctrl+Y / Ctrl+Shift+Z | Redo                               |
 
@@ -124,7 +129,9 @@ The viewport renders like URP: scenes are lit and drawn in HDR, then post-proces
   Depth Of Field (Gaussian and Bokeh), Film Grain, Lens Distortion, Lift Gamma Gain, Motion Blur
   (camera), Panini Projection, Shadows Midtones Highlights, Split Toning, Tonemapping (Neutral, ACES),
   Vignette, White Balance. Settings and defaults follow URP.
-- New scenes start like a URP scene: a Directional Light with soft shadows, an Environment (the sky) and a Global Volume
+- **Camera** component: where the built game renders from (field of view, clip planes, skybox or solid
+  color background). The viewport keeps its own camera.
+- New scenes start like a URP scene: a Main Camera, a Directional Light with soft shadows, an Environment (the sky) and a Global Volume
   with ACES tonemapping, a little bloom and a vignette.
 - Color Lookup takes a PNG strip of N tiles of N×N (e.g. 1024×32); `Samples/Sandbox/Assets/Textures/NeutralLUT32.png`
   is a neutral one to grade in an image editor.

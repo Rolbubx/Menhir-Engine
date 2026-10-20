@@ -13,7 +13,7 @@ namespace Menhir.Editor.Rendering.OpenGL;
 /// </summary>
 internal sealed unsafe class GLPostProcessor : IDisposable
 {
-    private const int CurveSamples = 128;
+    private const int CurveSamples = PostProcessUniforms.CurveSamples;
 
     private readonly GL _gl;
     private readonly GLRenderTexturePool _pool;
@@ -312,16 +312,11 @@ internal sealed unsafe class GLPostProcessor : IDisposable
             u.Set("uBloomTint", PostProcessMath.BloomTint(b.Tint));
         }
 
-        bool distortion = stack.LensDistortion is { } ld && (ld.Intensity != 0f || ld.Scale != 1f);
-        u.Set("uDistortionOn", distortion ? 1 : 0);
-        if (distortion)
-        {
-            var (center, parameters) = PostProcessMath.LensDistortion(stack.LensDistortion!);
-            u.Set("uDistortionCenter", center);
-            u.Set("uDistortionParams", parameters);
-        }
-
-        u.Set("uChromaAmount", (stack.ChromaticAberration?.Intensity ?? 0f) * 0.05f);
+        foreach (ShaderUniform uniform in PostProcessUniforms.Uber(stack))
+            u.Set(uniform);
+        if (stack.ColorCurves is { } curves)
+            UploadCurves(curves);
+        u.SetTexture("uCurves", 2, _curveTexture);
 
         Vignette? vignette = stack.Vignette is { Intensity: > 0f } v ? v : null;
         u.Set("uVignetteOn", vignette != null ? 1 : 0);
@@ -332,8 +327,6 @@ internal sealed unsafe class GLPostProcessor : IDisposable
             u.Set("uVignetteParams", new Vector3(vignette.Intensity * 3f, vignette.Smoothness * 5f,
                 vignette.Rounded ? target.Width / (float)target.Height : 1f));
         }
-
-        SetColorGrading(u, stack);
 
         bool lut = stack.ColorLookup is { Contribution: > 0f } && colorLookup != null &&
                    colorLookup.Width == colorLookup.Height * colorLookup.Height;
@@ -357,86 +350,12 @@ internal sealed unsafe class GLPostProcessor : IDisposable
         Draw(target.OutputFramebuffer, target.Width, target.Height);
     }
 
-    private void SetColorGrading(GLShaderProgram u, PostProcessStack stack)
-    {
-        ColorAdjustments? adjustments = stack.ColorAdjustments;
-        u.Set("uPostExposure", MathF.Pow(2f, adjustments?.PostExposure ?? 0f));
-        u.Set("uHueSatCon", new Vector3(
-            (adjustments?.HueShift ?? 0f) / 360f,
-            (adjustments?.Saturation ?? 0f) / 100f + 1f,
-            (adjustments?.Contrast ?? 0f) / 100f + 1f));
-        u.Set("uColorFilter", adjustments != null ? Xyz(adjustments.ColorFilter) : Vector3.One);
-
-        WhiteBalance? whiteBalance = stack.WhiteBalance is { } wb && (wb.Temperature != 0f || wb.Tint != 0f) ? wb : null;
-        u.Set("uWhiteBalanceOn", whiteBalance != null ? 1 : 0);
-        if (whiteBalance != null)
-            u.Set("uWhiteBalance", PostProcessMath.WhiteBalanceCoefficients(whiteBalance.Temperature, whiteBalance.Tint));
-
-        SplitToning? split = stack.SplitToning;
-        u.Set("uSplitToningOn", split != null ? 1 : 0);
-        if (split != null)
-        {
-            Vector4 shadows = ColorSpace.LinearToGamma(split.Shadows);
-            Vector4 highlights = ColorSpace.LinearToGamma(split.Highlights);
-            u.Set("uSplitShadows", new Vector4(shadows.X, shadows.Y, shadows.Z, split.Balance / 100f));
-            u.Set("uSplitHighlights", Xyz(highlights));
-        }
-
-        ChannelMixer? mixer = stack.ChannelMixer;
-        u.Set("uChannelMixerOn", mixer != null ? 1 : 0);
-        if (mixer != null)
-        {
-            u.Set("uChannelMixerRed", new Vector3(mixer.RedOutRedIn, mixer.RedOutGreenIn, mixer.RedOutBlueIn) / 100f);
-            u.Set("uChannelMixerGreen", new Vector3(mixer.GreenOutRedIn, mixer.GreenOutGreenIn, mixer.GreenOutBlueIn) / 100f);
-            u.Set("uChannelMixerBlue", new Vector3(mixer.BlueOutRedIn, mixer.BlueOutGreenIn, mixer.BlueOutBlueIn) / 100f);
-        }
-
-        ShadowsMidtonesHighlights? smh = stack.ShadowsMidtonesHighlights;
-        u.Set("uSmhOn", smh != null ? 1 : 0);
-        if (smh != null)
-        {
-            var (s, m, h) = PostProcessMath.ShadowsMidtonesHighlights(smh.Shadows, smh.Midtones, smh.Highlights);
-            u.Set("uSmhShadows", s);
-            u.Set("uSmhMidtones", m);
-            u.Set("uSmhHighlights", h);
-            u.Set("uSmhLimits", new Vector4(smh.ShadowsStart, smh.ShadowsEnd, smh.HighlightsStart, smh.HighlightsEnd));
-        }
-
-        LiftGammaGain? lgg = stack.LiftGammaGain;
-        u.Set("uLiftGammaGainOn", lgg != null ? 1 : 0);
-        if (lgg != null)
-        {
-            var (lift, gamma, gain) = PostProcessMath.LiftGammaGain(lgg.Lift, lgg.Gamma, lgg.Gain);
-            u.Set("uLift", lift);
-            u.Set("uGamma", gamma);
-            u.Set("uGain", gain);
-        }
-
-        ColorCurves? curves = stack.ColorCurves;
-        u.Set("uCurvesOn", curves != null ? 1 : 0);
-        if (curves != null)
-            UploadCurves(curves);
-        u.SetTexture("uCurves", 2, _curveTexture);
-
-        u.Set("uTonemapping", stack.Tonemapping?.Mode switch
-        {
-            TonemappingMode.Neutral => 1,
-            TonemappingMode.ACES => 2,
-            _ => 0,
-        });
-    }
-
     private void UploadCurves(ColorCurves curves)
     {
-        ColorCurve[] rows =
-            [curves.Master, curves.Red, curves.Green, curves.Blue, curves.HueVsHue, curves.HueVsSat, curves.SatVsSat, curves.LumVsSat];
-        var values = new float[CurveSamples * rows.Length];
-        for (int row = 0; row < rows.Length; row++)
-            rows[row].Bake(CurveSamples).CopyTo(values, row * CurveSamples);
-
+        float[] values = PostProcessUniforms.BakeCurves(curves);
         _gl.BindTexture(TextureTarget.Texture2D, _curveTexture);
         fixed (float* data = values)
-            _gl.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, CurveSamples, (uint)rows.Length, PixelFormat.Red, PixelType.Float, data);
+            _gl.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, CurveSamples, 8, PixelFormat.Red, PixelType.Float, data);
     }
 
     private uint GrainTexture(FilmGrainType type)

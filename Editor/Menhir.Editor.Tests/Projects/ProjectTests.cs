@@ -20,11 +20,11 @@ public sealed class ProjectTests : IDisposable
         Assert.Equal("My Game", project.Name);
         Assert.True(File.Exists(Path.Combine(project.RootPath, "ProjectSettings", "ProjectSettings.json")));
         Assert.True(Directory.Exists(Path.Combine(project.RootPath, "Cache")));
-        Assert.Equal("Cache/\n", File.ReadAllText(Path.Combine(project.RootPath, ".gitignore")));
+        Assert.Equal("Cache/\nBuild/\n", File.ReadAllText(Path.Combine(project.RootPath, ".gitignore")));
 
         string scene = File.ReadAllText(Path.Combine(project.RootPath, "Assets", "Scenes", "Main.scene"));
         var warnings = new List<string>();
-        Assert.Equal(["Directional Light", "Environment", "Global Volume"],
+        Assert.Equal(["Main Camera", "Directional Light", "Environment", "Global Volume"],
             SceneSerializer.Deserialize(scene, warnings).Entities.Select(e => e.Name));
         Assert.Empty(warnings);
     }

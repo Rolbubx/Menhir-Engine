@@ -9,6 +9,7 @@ using Menhir.Editor.Commands;
 using Menhir.Editor.Logging;
 using Menhir.Editor.UI;
 using Menhir.Editor.UI.Dialogs;
+using Menhir.Editor.UI.Hub;
 using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.OpenGL;
@@ -31,8 +32,7 @@ public sealed class EditorApplication : IDisposable
 
     private readonly UnsavedChangesDialog _unsavedChangesDialog = new();
     private readonly SaveSceneDialog _saveSceneDialog;
-    private readonly OpenProjectDialog _openProjectDialog = new();
-    private readonly NewProjectDialog _newProjectDialog = new();
+    private readonly ProjectHub _hub;
 
     private GL? _gl;
     private IInputContext? _input;
@@ -51,12 +51,17 @@ public sealed class EditorApplication : IDisposable
     // ImGui keeps a raw pointer to the ini path, so it must outlive the ImGui context.
     private IntPtr _layoutFilePath;
 
+    // The layout is loaded and saved only once a project is open: frames showing only the hub
+    // do not submit the dockspace, and saving then would drop the docked panels from layout.ini.
+    private bool _layoutEnabled;
+
     public EditorApplication(string[] args)
     {
         EditorPaths.EnsureConfigDirectory();
         _preferences = EditorPreferences.Load(EditorPaths.PreferencesFile);
         _saveSceneDialog = new SaveSceneDialog(_context);
         _statusBar = new StatusBar(Log.Messages, ShowConsole);
+        _hub = new ProjectHub(_preferences, OpenProject, ProjectLocator.FindSample());
         OpenStartupProject(args);
 
         if (_preferences.LayoutVersion != EditorDockspace.LayoutVersion)
@@ -65,8 +70,7 @@ public sealed class EditorApplication : IDisposable
             _preferences.LayoutVersion = EditorDockspace.LayoutVersion;
         }
 
-        // No saved layout yet: build the default one on the first frame.
-        _dockspace = new EditorDockspace(buildDefaultLayout: !File.Exists(EditorPaths.LayoutFile));
+        _dockspace = new EditorDockspace();
 
         WindowOptions options = WindowOptions.Default with
         {
@@ -90,14 +94,12 @@ public sealed class EditorApplication : IDisposable
         };
     }
 
+    /// <summary>Opens the project given with --project; otherwise the hub is shown.</summary>
     private void OpenStartupProject(string[] args)
     {
-        string? path = ProjectLocator.Find(args, _preferences.RecentProjects);
+        string? path = ProjectLocator.FromArgs(args);
         if (path == null)
-        {
-            Log.Warning("No project found; use File > Open Project or start with --project <folder>.");
             return;
-        }
         try
         {
             OpenProject(Project.Open(path));
@@ -111,6 +113,8 @@ public sealed class EditorApplication : IDisposable
     private void OpenProject(Project project)
     {
         Log.Info($"Opened project {project.RootPath}");
+        if (project.Settings.Remote is { } remote)
+            Log.Warning($"This project has a remote ({remote.Url}), but remote collaboration is not available yet: it is opened as a local project.");
         _context.OpenProject(project);
         _preferences.AddRecentProject(project.RootPath);
         _preferences.Save(EditorPaths.PreferencesFile);
@@ -159,11 +163,6 @@ public sealed class EditorApplication : IDisposable
     private void OpenSceneAsset(AssetEntry asset) =>
         ConfirmDiscardChanges(() => _context.OpenScene(asset));
 
-    private string DialogStartFolder =>
-        _context.Project is { } project && Directory.GetParent(project.RootPath) is { } parent
-            ? parent.FullName
-            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
     public void Run() => _window.Run();
 
     private void OnLoad()
@@ -199,6 +198,20 @@ public sealed class EditorApplication : IDisposable
         ImGui.SetWindowFocus(console.WindowId);
     }
 
+    /// <summary>
+    /// Starts loading and saving layout.ini. Without a saved layout, the default one is built on the next frame.
+    /// Must be called outside of an ImGui frame.
+    /// </summary>
+    private unsafe void EnableLayout(bool loadNow)
+    {
+        if (!File.Exists(EditorPaths.LayoutFile))
+            _dockspace.RequestLayoutReset();
+        else if (loadNow)
+            ImGui.LoadIniSettingsFromDisk(EditorPaths.LayoutFile);
+        ImGui.GetIO().NativePtr->IniFilename = (byte*)_layoutFilePath;
+        _layoutEnabled = true;
+    }
+
     /// <summary>Hides the cursor and gives unbounded mouse motion, e.g. while flying the viewport camera.</summary>
     private void SetCursorCaptured(bool captured)
     {
@@ -219,7 +232,9 @@ public sealed class EditorApplication : IDisposable
         io.ConfigWindowsMoveFromTitleBarOnly = true;
 
         _layoutFilePath = Marshal.StringToCoTaskMemUTF8(EditorPaths.LayoutFile);
-        io.NativePtr->IniFilename = (byte*)_layoutFilePath;
+        io.NativePtr->IniFilename = null;
+        if (_context.Project != null)
+            EnableLayout(loadNow: false); // ImGui loads the file itself on its first frame
 
         EditorFonts.Load();
         EditorTheme.Apply();
@@ -231,6 +246,14 @@ public sealed class EditorApplication : IDisposable
 
         _gl!.ClearColor(0.08f, 0.08f, 0.08f, 1f);
         _gl.Clear(ClearBufferMask.ColorBufferBit);
+
+        // Without a project, the hub fills the window.
+        if (_context.Project == null)
+        {
+            _hub.DrawFullscreen();
+            FinishFrame();
+            return;
+        }
 
         DrawMainMenuBar();
         _dockspace.Draw(bottomMargin: StatusBar.Height);
@@ -244,11 +267,18 @@ public sealed class EditorApplication : IDisposable
 
         _unsavedChangesDialog.Draw();
         _saveSceneDialog.Draw();
-        _openProjectDialog.Draw();
-        _newProjectDialog.Draw();
+        _hub.DrawModal();
         HandleShortcuts();
+        FinishFrame();
+    }
 
-        _imgui.Render();
+    private void FinishFrame()
+    {
+        _imgui!.Render();
+
+        // A project was just opened from the hub: load the layout between two frames.
+        if (_context.Project != null && !_layoutEnabled)
+            EnableLayout(loadNow: true);
 
         string title = BuildTitle();
         if (title != _title)
@@ -331,9 +361,9 @@ public sealed class EditorApplication : IDisposable
 
         ImGui.Separator();
         if (ImGui.MenuItem("New Project..."))
-            ConfirmDiscardChanges(() => _newProjectDialog.Open(DialogStartFolder, OpenProject));
+            ConfirmDiscardChanges(() => _hub.Show(ProjectHub.Page.NewProject));
         if (ImGui.MenuItem("Open Project..."))
-            ConfirmDiscardChanges(() => _openProjectDialog.Open(DialogStartFolder, OpenProject));
+            ConfirmDiscardChanges(() => _hub.Show(ProjectHub.Page.Projects));
         if (ImGui.BeginMenu("Open Recent", _preferences.RecentProjects.Count > 0))
         {
             foreach (string path in _preferences.RecentProjects.ToList())

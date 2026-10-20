@@ -2,25 +2,21 @@ using Menhir.Editor.Projects;
 
 namespace Menhir.Editor;
 
-/// <summary>
-/// Picks the project to open at startup: "--project &lt;folder&gt;" on the command line,
-/// otherwise the most recent project that still exists, otherwise the Samples/Sandbox
-/// project of this repository when the editor is run from it.
-/// </summary>
+/// <summary>Finds projects to open at startup.</summary>
 public static class ProjectLocator
 {
     private static readonly string SandboxRelativePath = Path.Combine("Samples", "Sandbox");
 
-    public static string? Find(string[] args, IEnumerable<string> recentProjects)
+    /// <summary>The folder given as "--project &lt;folder&gt;" on the command line, or null.</summary>
+    public static string? FromArgs(string[] args)
     {
         int index = Array.IndexOf(args, "--project");
-        if (index >= 0 && index + 1 < args.Length)
-            return args[index + 1];
-
-        return recentProjects.FirstOrDefault(Project.IsProjectFolder)
-               ?? FindSandbox(Environment.CurrentDirectory)
-               ?? FindSandbox(AppContext.BaseDirectory);
+        return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
     }
+
+    /// <summary>The Samples/Sandbox project of this repository when the editor is run from it, or null.</summary>
+    public static string? FindSample() =>
+        FindSandbox(Environment.CurrentDirectory) ?? FindSandbox(AppContext.BaseDirectory);
 
     private static string? FindSandbox(string start)
     {

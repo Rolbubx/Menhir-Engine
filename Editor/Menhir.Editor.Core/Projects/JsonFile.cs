@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Menhir.Editor.Projects;
 
@@ -10,6 +11,8 @@ internal static class JsonFile
         WriteIndented = true,
         NewLine = "\n",
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter() },
     };
 
     /// <summary>Reads a file, or returns null when it is missing or unreadable.</summary>

@@ -21,11 +21,6 @@ public sealed class EditorDockspace
 
     private bool _resetRequested;
 
-    public EditorDockspace(bool buildDefaultLayout)
-    {
-        _resetRequested = buildDefaultLayout;
-    }
-
     public void RequestLayoutReset() => _resetRequested = true;
 
     /// <summary>

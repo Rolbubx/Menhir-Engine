@@ -18,9 +18,18 @@ Requires the .NET 10 SDK.
 dotnet run --project Editor/Menhir.Editor
 ```
 
-The first time, this opens the `Samples/Sandbox` project; afterwards the editor reopens the last
-project (and its last scene). Use **File → New Project / Open Project / Open Recent** to switch,
-or pass a project folder (one that contains `Assets/`):
+The editor starts on the **Hub**:
+
+- **Projects**: click a recent project to open it (right-click to remove it from the list); the
+  `Samples/Sandbox` project is listed when the editor runs from this repository. Or open a project
+  folder (**Project's dir**, one that contains `Assets/`). Opening from a remote is not available yet.
+- **New Project**: project type (for now, *Menhir Universal Pipeline*), name, the folder to create it in,
+  and an optional remote (`http://...`). With a remote, choose what happens to collaborators when you quit
+  and how files are sent to them. These choices are saved in `ProjectSettings/ProjectSettings.json`;
+  remote collaboration itself is not implemented yet (see [Docs/ProjectRemote.md](Docs/ProjectRemote.md)).
+
+**File → New Project / Open Project** opens the Hub again; **Open Recent** switches directly.
+A project folder can also be given on the command line, which skips the Hub:
 
 ```sh
 dotnet run --project Editor/Menhir.Editor -- --project path/to/MyGame
@@ -36,7 +45,8 @@ Run the unit tests with `dotnet test`.
 
 A project is a folder with `Assets/` (committed, with the `.meta` files), `ProjectSettings/`
 (committed) and `Cache/` (git-ignored; e.g. which scene to reopen). **New Project** creates that
-layout plus an empty `Assets/Scenes/Main.scene` and a `.gitignore`.
+layout plus an empty `Assets/Scenes/Main.scene` and a `.gitignore`. The editor reopens a project's
+last scene.
 
 | Shortcut       | Action                                    |
 |----------------|-------------------------------------------|

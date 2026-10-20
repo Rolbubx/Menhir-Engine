@@ -17,7 +17,10 @@ public abstract class EditorPanel
     public void Draw()
     {
         if (!IsOpen)
+        {
+            OnHidden();
             return;
+        }
 
         bool open = true;
         PushWindowStyle();
@@ -26,12 +29,17 @@ public abstract class EditorPanel
 
         if (visible)
             DrawContent();
+        else
+            OnHidden();
         ImGui.End();
 
         IsOpen = open;
     }
 
     protected abstract void DrawContent();
+
+    /// <summary>Called on frames where the panel is closed, collapsed or behind another tab.</summary>
+    protected virtual void OnHidden() { }
 
     /// <summary>Style pushed around ImGui.Begin (e.g. zero padding for the viewport).</summary>
     protected virtual void PushWindowStyle() { }

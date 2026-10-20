@@ -22,5 +22,17 @@ The window layout and editor preferences are stored per user, outside the repo:
 `%APPDATA%/Menhir/Editor` on Windows, `~/.config/Menhir/Editor` on Linux.
 Use **Window → Reset Layout** to restore the default layout.
 
+### Viewport controls
+
+| Input                    | Action                    |
+|--------------------------|---------------------------|
+| Hold right mouse button  | Fly mode (mouse to look)  |
+| W / A / S / D            | Move forward / left / back / right |
+| Q / E                    | Move down / up            |
+| Shift                    | Move 3× faster            |
+| Mouse wheel              | Change fly speed          |
+
+World conventions: right-handed, Y up, 1 unit = 1 meter.
+
 The editor font is [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), distributed under the
 SIL Open Font License (`Editor/Menhir.Editor/Resources/Fonts/JetBrainsMono-OFL.txt`).

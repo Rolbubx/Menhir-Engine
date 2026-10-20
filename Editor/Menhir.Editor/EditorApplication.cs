@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using ImGuiNET;
 using Menhir.Editor.Panels;
+using Menhir.Editor.Rendering;
+using Menhir.Editor.Rendering.OpenGL;
 using Menhir.Editor.UI;
 using Silk.NET.Input;
 using Silk.NET.Maths;
@@ -17,12 +19,14 @@ public sealed class EditorApplication : IDisposable
 {
     private readonly IWindow _window;
     private readonly EditorPreferences _preferences;
-    private readonly List<EditorPanel> _panels;
+    private readonly EditorContext _context = new();
     private readonly EditorDockspace _dockspace;
+    private List<EditorPanel> _panels = [];
 
     private GL? _gl;
     private IInputContext? _input;
     private ImGuiController? _imgui;
+    private IRenderer? _renderer;
 
     // Closing the window raises Closing synchronously, which tears down ImGui,
     // so a close requested from the UI is deferred until the frame is finished.
@@ -35,20 +39,6 @@ public sealed class EditorApplication : IDisposable
     {
         EditorPaths.EnsureConfigDirectory();
         _preferences = EditorPreferences.Load(EditorPaths.PreferencesFile);
-
-        _panels =
-        [
-            new ViewportPanel(),
-            new HierarchyPanel(),
-            new InspectorPanel(),
-            new ProjectPanel(),
-            new ConsolePanel(),
-        ];
-        foreach (EditorPanel panel in _panels)
-        {
-            if (_preferences.OpenPanels.TryGetValue(panel.Title, out bool open))
-                panel.IsOpen = open;
-        }
 
         // No saved layout yet: build the default one on the first frame.
         _dockspace = new EditorDockspace(buildDefaultLayout: !File.Exists(EditorPaths.LayoutFile));
@@ -78,6 +68,34 @@ public sealed class EditorApplication : IDisposable
         _imgui = new ImGuiController(_gl, _window, _input, EditorFonts.CreateConfig(), ConfigureImGui);
 
         Console.WriteLine($"OpenGL {_gl.GetStringS(StringName.Version)} — {_gl.GetStringS(StringName.Renderer)}");
+
+        _renderer = new GLRenderer(_gl);
+        _panels =
+        [
+            new ViewportPanel(_context, _renderer, SetCursorCaptured),
+            new HierarchyPanel(),
+            new InspectorPanel(),
+            new ProjectPanel(),
+            new ConsolePanel(),
+        ];
+        foreach (EditorPanel panel in _panels)
+        {
+            if (_preferences.OpenPanels.TryGetValue(panel.Title, out bool open))
+                panel.IsOpen = open;
+        }
+    }
+
+    /// <summary>Hides the cursor and gives unbounded mouse motion, e.g. while flying the viewport camera.</summary>
+    private void SetCursorCaptured(bool captured)
+    {
+        foreach (IMouse mouse in _input!.Mice)
+        {
+            ICursor cursor = mouse.Cursor;
+            if (!captured)
+                cursor.CursorMode = CursorMode.Normal;
+            else
+                cursor.CursorMode = cursor.IsSupported(CursorMode.Raw) ? CursorMode.Raw : CursorMode.Disabled;
+        }
     }
 
     private unsafe void ConfigureImGui()
@@ -167,7 +185,12 @@ public sealed class EditorApplication : IDisposable
             _preferences.OpenPanels[panel.Title] = panel.IsOpen;
         _preferences.Save(EditorPaths.PreferencesFile);
 
-        // Destroying the ImGui context writes layout.ini; do it while the GL context is alive.
+        // GPU resources and the ImGui context (whose destruction writes layout.ini)
+        // must go while the GL context is still alive.
+        foreach (IDisposable disposable in _panels.OfType<IDisposable>())
+            disposable.Dispose();
+        _renderer?.Dispose();
+        _renderer = null;
         _imgui?.Dispose();
         _imgui = null;
         _input?.Dispose();

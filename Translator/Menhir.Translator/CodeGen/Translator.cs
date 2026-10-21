@@ -21,6 +21,8 @@ public sealed class Il2cTranslator
     private readonly Queue<MethodDesc> _pending = new();
     private readonly HashSet<MethodDesc> _requested = new();
     private readonly List<MethodDesc> _methods = new();
+    private readonly Dictionary<TypeDesc, List<(TypeDesc Interface, List<MethodDesc?> Methods)>> _interfaceMaps = new();
+    private readonly HashSet<MethodDesc> _unboxingStubs = new();
 
     public Il2cTranslator(TypeSystemContext context)
     {
@@ -51,6 +53,8 @@ public sealed class Il2cTranslator
             foreach (MethodDesc method in type.Methods.Where(m => !m.IsGeneric))
                 RequireMethod(method);
         }
+        foreach (TypeDesc type in _types.ToList())
+            BuildInterfaceMap(type);
 
         // Method bodies first: they register the string literals, arrays, data, generic
         // instantiations and methods they use, which are compiled in turn.
@@ -58,6 +62,12 @@ public sealed class Il2cTranslator
         while (_pending.TryDequeue(out MethodDesc? method))
         {
             RequireType(method.Owner);
+            if (IsDelegate(method.Owner) && !method.HasBody && method.Name is ".ctor" or "Invoke")
+            {
+                _methods.Add(method);
+                bodies.Append(DelegateMethod(method)).Append('\n');
+                continue;
+            }
             if (method.IsInternalCall || method.HasBody)
                 _methods.Add(method);
             if (!method.HasBody || method.IsInternalCall)
@@ -91,6 +101,7 @@ public sealed class Il2cTranslator
         WriteVTablesAndTypeInfos(c);
         WriteClassInits(c);
         c.Append("/* ---- Methods ---- */\n\n").Append(bodies);
+        WriteExceptionFactory(c);
         if (entry != null)
             WriteMain(c, entry);
         return c.ToString();
@@ -120,6 +131,96 @@ public sealed class Il2cTranslator
         BuildVTable(type);
         foreach (MethodDesc method in type.Methods.Where(m => !m.IsGeneric))
             RequireMethod(method);
+        BuildInterfaceMap(type);
+    }
+
+    // ---- Interfaces ---------------------------------------------------------------------------
+
+    /// <summary>The instance methods of an interface, in declaration order: their index is the slot of interface calls.</summary>
+    public static List<MethodDesc> InterfaceMethods(TypeDesc interfaceType) =>
+        interfaceType.Methods.Where(m => !m.IsStatic).ToList();
+
+    public static int InterfaceSlot(MethodDesc method) =>
+        InterfaceMethods(method.Owner).FindIndex(m => m.Handle == method.Handle);
+
+    /// <summary>Every interface a type implements: declared by it, its base types, and inherited by those interfaces.</summary>
+    public static List<TypeDesc> AllInterfaces(TypeDesc type)
+    {
+        var result = new List<TypeDesc>();
+        void Add(TypeDesc i)
+        {
+            if (result.Contains(i))
+                return;
+            result.Add(i);
+            foreach (TypeDesc inherited in i.DeclaredInterfaces)
+                Add(inherited);
+        }
+        foreach (TypeDesc t in type.BaseTypesAndSelf().Reverse())
+            foreach (TypeDesc i in t.DeclaredInterfaces)
+                Add(i);
+        return result;
+    }
+
+    private void BuildInterfaceMap(TypeDesc type)
+    {
+        if (_interfaceMaps.ContainsKey(type) || type.ContainsGenericParameters)
+            return;
+        var map = new List<(TypeDesc, List<MethodDesc?>)>();
+        _interfaceMaps[type] = map;
+        foreach (TypeDesc interfaceType in AllInterfaces(type))
+        {
+            RequireType(interfaceType);
+            var methods = new List<MethodDesc?>();
+            if (!type.IsInterface && !type.IsAbstract)
+            {
+                foreach (MethodDesc method in InterfaceMethods(interfaceType))
+                {
+                    MethodDesc? implementation = InterfaceImplementation(type, method);
+                    if (implementation != null && !implementation.IsAbstract)
+                    {
+                        RequireMethod(implementation);
+                        if (implementation.Owner.IsValueType)
+                            _unboxingStubs.Add(implementation);
+                    }
+                    methods.Add(implementation);
+                }
+            }
+            map.Add((interfaceType, methods));
+        }
+    }
+
+    /// <summary>
+    /// The method an interface call runs on an object of exactly <paramref name="type"/>: an explicit
+    /// implementation (MethodImpl), else the most derived public method with the same name and
+    /// signature (and its override), else the interface's default implementation.
+    /// </summary>
+    public MethodDesc? InterfaceImplementation(TypeDesc type, MethodDesc interfaceMethod)
+    {
+        foreach (TypeDesc t in type.BaseTypesAndSelf())
+        {
+            var reader = t.Module!.Reader;
+            foreach (var handle in reader.GetTypeDefinition(t.Handle).GetMethodImplementations())
+            {
+                var implementation = reader.GetMethodImplementation(handle);
+                MethodDesc declaration = Context.ResolveMethod(t.Module, implementation.MethodDeclaration, new GenericContext(t.TypeArguments, []));
+                if (declaration.Owner != interfaceMethod.Owner || declaration.Handle != interfaceMethod.Handle)
+                    continue;
+                MethodDesc body = Context.ResolveMethod(t.Module, implementation.MethodBody, new GenericContext(t.TypeArguments, []));
+                return t.Methods.First(m => m.Handle == body.Handle);
+            }
+        }
+        foreach (TypeDesc t in type.BaseTypesAndSelf())
+        {
+            foreach (MethodDesc candidate in t.Methods)
+            {
+                if (candidate.IsStatic || candidate.Name != interfaceMethod.Name || candidate.IsGeneric != interfaceMethod.IsGeneric ||
+                    (candidate.Attributes & System.Reflection.MethodAttributes.MemberAccessMask) != System.Reflection.MethodAttributes.Public ||
+                    candidate.ReturnType != interfaceMethod.ReturnType || !candidate.ParameterTypes.SequenceEqual(interfaceMethod.ParameterTypes))
+                    continue;
+                return candidate.IsVirtual ? Implementation(type, candidate) ?? candidate : candidate;
+            }
+        }
+        return interfaceMethod.HasBody ? interfaceMethod : null;
     }
 
     /// <summary>Queues a method for compilation (a generic one only with its type arguments).</summary>
@@ -424,8 +525,29 @@ public sealed class Il2cTranslator
             string size = type.IsInterface || type.IsVoid ? "0" : type.IsValueType ? $"sizeof({CType(type)})" : $"sizeof({Names.Type(type)})";
             TypeDesc? baseType = type.BaseType;
             string baseInfo = baseType != null ? "&" + Names.TypeInfo(baseType) : "NULL";
+
+            string interfaces = "NULL";
+            var map = _interfaceMaps.GetValueOrDefault(type) ?? [];
+            if (map.Count > 0)
+            {
+                string mapName = Names.Type(type) + "__interfaces";
+                for (int i = 0; i < map.Count; i++)
+                {
+                    if (map[i].Methods.Count == 0)
+                        continue;
+                    c.Append($"static void* const {mapName}_{i}[] = {{ ");
+                    foreach (MethodDesc? method in map[i].Methods)
+                        c.Append($"(void*){VTableEntry(type, method)}, ");
+                    c.Append("};\n");
+                }
+                c.Append($"static const MInterfaceMap {mapName}[] = {{\n");
+                for (int i = 0; i < map.Count; i++)
+                    c.Append($"    {{ &{Names.TypeInfo(map[i].Interface)}, {(map[i].Methods.Count > 0 ? $"{mapName}_{i}" : "NULL")} }},\n");
+                c.Append("};\n");
+                interfaces = mapName;
+            }
             c.Append($"const MType {Names.TypeInfo(type)} = {{ {CString(type.FullName)}, {baseInfo}, ");
-            c.Append($"{(flags.Count > 0 ? string.Join(" | ", flags) : "0")}, {size}, NULL, 0, {vtable}, {slots.Count} }};\n\n");
+            c.Append($"{(flags.Count > 0 ? string.Join(" | ", flags) : "0")}, {size}, NULL, 0, {vtable}, {slots.Count}, {interfaces}, {map.Count} }};\n\n");
         }
 
         foreach (TypeDesc array in _arrayTypes)
@@ -434,27 +556,32 @@ public sealed class Il2cTranslator
             int slots = VTable(Context.ArrayType).Count;
             string vtable = slots > 0 ? Names.VTable(Context.ArrayType) : "NULL";
             c.Append($"const MType {Names.TypeInfo(array)} = {{ {CString(array.FullName)}, &{Names.TypeInfo(Context.ArrayType)}, ");
-            c.Append($"M_TYPE_ARRAY, sizeof(MArray), &{Names.TypeInfo(element)}, sizeof({CType(element)}), {vtable}, {slots} }};\n");
+            c.Append($"M_TYPE_ARRAY, sizeof(MArray), &{Names.TypeInfo(element)}, sizeof({CType(element)}), {vtable}, {slots}, NULL, 0 }};\n");
         }
         c.Append('\n');
     }
 
     private string VTableEntry(TypeDesc type, MethodDesc? method)
     {
-        if (method == null || method.IsAbstract || (!method.HasBody && !method.IsInternalCall))
+        if (method == null || method.IsAbstract || (!method.HasBody && !method.IsInternalCall && !IsDelegate(method.Owner)))
             return "m_abstract_method";
         // Boxed structs hold the value after the object header: their overrides go through a stub.
         return method.Owner.IsValueType ? UnboxingStubName(method) : Names.Method(method);
     }
 
-    private string UnboxingStubName(MethodDesc method) => Names.Method(method) + "__unbox";
+    public string UnboxingStubName(MethodDesc method)
+    {
+        _unboxingStubs.Add(method);
+        return Names.Method(method) + "__unbox";
+    }
 
     private void WriteUnboxingStubs(StringBuilder c)
     {
         c.Append("/* ---- Virtual methods of structs, called on boxed values ---- */\n\n");
         foreach (TypeDesc type in _types.Where(t => t.IsValueType))
         {
-            foreach (MethodDesc method in type.Methods.Where(m => m.IsVirtual && m.HasBody && !m.IsGeneric && _requested.Contains(m)))
+            foreach (MethodDesc method in type.Methods.Where(m => !m.IsStatic && m.HasBody && !m.IsGeneric && _requested.Contains(m) &&
+                                                                 (m.IsVirtual || _unboxingStubs.Contains(m))))
             {
                 var parameters = new List<string> { "MObject* self" };
                 var arguments = new List<string> { $"({ThisCType(type)})M_BOX_DATA(self)" };
@@ -468,6 +595,75 @@ public sealed class Il2cTranslator
                 c.Append(method.ReturnType.IsVoid ? $"    {call};\n" : $"    return {call};\n").Append("}\n\n");
             }
         }
+    }
+
+    // ---- Delegates ----------------------------------------------------------------------------
+
+    public bool IsDelegate(TypeDesc type) =>
+        type.IsDefinition && type.BaseType is { } baseType && baseType.FullName == "System.MulticastDelegate";
+
+    /// <summary>C name of a field of System.Delegate (_target, _methodPtr, _isStatic, _invocationList).</summary>
+    public string DelegateField(string name) =>
+        Names.Field(Context.CoreType("System", "Delegate").Fields.First(f => f.Name == name));
+
+    /// <summary>
+    /// The runtime-implemented members of a delegate type. Invoke calls each delegate of the
+    /// invocation list (Delegate.Combine), or the function with the target as this (none for a
+    /// static method).
+    /// </summary>
+    private string DelegateMethod(MethodDesc method)
+    {
+        string self = $"(({CType(method.Owner)})a0)";
+        var c = new StringBuilder(Prototype(method)).Append("\n{\n");
+        if (method.IsConstructor)
+        {
+            c.Append($"    {self}->{DelegateField("_target")} = ({CType(Context.ObjectType)})a1;\n");
+            c.Append($"    {self}->{DelegateField("_methodPtr")} = a2;\n");
+            return c.Append("}\n").ToString();
+        }
+
+        var parameters = method.ParameterTypes.Select((t, i) => (Type: CType(t), Name: $"a{i + 1}")).ToList();
+        string arguments = string.Join(", ", parameters.Select(p => p.Name));
+        bool returns = !method.ReturnType.IsVoid;
+        string list = $"{self}->{DelegateField("_invocationList")}";
+        c.Append($"    if ({list} != NULL) {{\n");
+        if (returns)
+            c.Append($"        {CType(method.ReturnType)} result;\n        memset((void*)&result, 0, sizeof result);\n");
+        c.Append($"        for (int32_t i = 0; i < ((MArray*){list})->length; i++)\n");
+        string call = $"{Names.Method(method)}({string.Join(", ", new[] { $"({CType(method.Owner)})((MObject**)M_ARRAY_DATA({list}))[i]" }.Concat(parameters.Select(p => p.Name)))})";
+        c.Append(returns ? $"            result = {call};\n        return result;\n" : $"            {call};\n        return;\n");
+        c.Append("    }\n");
+        string staticType = $"{CType(method.ReturnType)} (*)({(parameters.Count == 0 ? "void" : string.Join(", ", parameters.Select(p => p.Type)))})";
+        string instanceType = $"{CType(method.ReturnType)} (*)({string.Join(", ", new[] { "void*" }.Concat(parameters.Select(p => p.Type)))})";
+        string function = $"{self}->{DelegateField("_methodPtr")}";
+        string ret = returns ? "return " : "";
+        c.Append($"    if ({self}->{DelegateField("_isStatic")})\n");
+        c.Append($"        {ret}(({staticType}){function})({arguments});\n    else\n");
+        c.Append($"        {ret}(({instanceType}){function})({string.Join(", ", new[] { $"(void*){self}->{DelegateField("_target")}" }.Concat(parameters.Select(p => p.Name)))});\n");
+        return c.Append("}\n").ToString();
+    }
+
+    // ---- Exceptions raised by the runtime -----------------------------------------------------
+
+    /// <summary>m_new_exception: the runtime's errors (null reference, bad cast...) as corlib exception objects.</summary>
+    private void WriteExceptionFactory(StringBuilder c)
+    {
+        TypeDesc exception = Context.CoreType("System", "Exception");
+        c.Append("MObject* m_new_exception(const char* typeName, const char* message)\n{\n");
+        c.Append("    MString* text = m_string_from_utf8(message);\n    MObject* e;\n");
+        IEnumerable<TypeDesc> types = _types.Where(t => t.Module == Context.CoreLib && !t.IsInstantiation && t.IsSubclassOf(exception) && !t.IsAbstract)
+            .OrderBy(t => t == exception ? 1 : 0);
+        foreach (TypeDesc type in types)
+        {
+            MethodDesc? constructor = type.Methods.FirstOrDefault(m => m.IsConstructor && m.ParameterTypes.Count == 1 &&
+                                                                       m.ParameterTypes[0] == Context.StringType);
+            if (constructor == null)
+                continue;
+            string test = type == exception ? "" : $"if (strcmp(typeName, {CString(type.FullName)}) == 0) ";
+            c.Append($"    {test}{{\n        e = m_new_object(&{Names.TypeInfo(type)});\n");
+            c.Append($"        {Names.Method(constructor)}(({CType(type)})e, (System_String*)text);\n        return e;\n    }}\n");
+        }
+        c.Append("}\n\n");
     }
 
     // ---- Literals and data --------------------------------------------------------------------

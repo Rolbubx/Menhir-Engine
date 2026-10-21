@@ -18,6 +18,9 @@ public sealed class DifferentialTests(NativeProgramFixture fixture) : IClassFixt
     [InlineData("enums")]
     [InlineData("pointers")]
     [InlineData("generics")]
+    [InlineData("interfaces")]
+    [InlineData("exceptions")]
+    [InlineData("delegates")]
     public void NativeOutputMatchesDotnet(string program)
     {
         var expected = fixture.RunDotnet(program);

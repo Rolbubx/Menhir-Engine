@@ -21,6 +21,8 @@ public sealed class CBuilder
         "-std=gnu11", "-O1", "-g0",
         // .NET integer overflow wraps around, and the generated code casts between struct pointers.
         "-fwrapv", "-fno-strict-aliasing",
+        // Newer compilers reject these anyway: keep the generated code clean of them.
+        "-Werror=incompatible-pointer-types",
         "-Wno-unused-label", "-Wno-unused-variable", "-Wno-unused-but-set-variable", "-Wno-unused-function",
     ];
 

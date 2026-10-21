@@ -15,6 +15,7 @@
 #define MENHIR_RUNTIME_H
 
 #include <math.h>
+#include <setjmp.h>
 #include <stdalign.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -26,6 +27,12 @@ extern "C" {
 #endif
 
 typedef struct MType MType;
+
+/* The methods of one interface on a type, in the interface's declaration order. */
+typedef struct MInterfaceMap {
+    const MType* interfaceType;
+    void* const* methods;
+} MInterfaceMap;
 
 typedef struct MObject {
     const MType* type;
@@ -49,6 +56,8 @@ struct MType {
     uint32_t elementSize;       /* arrays */
     void* const* vtable;        /* virtual methods, by slot */
     uint32_t vtableLength;
+    const MInterfaceMap* interfaces; /* every interface the type implements, inherited ones included */
+    uint32_t interfaceCount;
 };
 
 typedef struct MArray {
@@ -98,10 +107,39 @@ MObject* m_castclass(MObject* object, const MType* target);
 void* m_unbox(MObject* object, const MType* valueType);
 /* Element store into an array of references: the value must fit the element type. */
 void m_check_array_store(MArray* array, MObject* value);
+/* The implementation of method slot of an interface on the object's type (null checked). */
+void* m_interface_method(MObject* object, const MType* interfaceType, uint32_t slot);
+/* A shallow copy of an object (Object.MemberwiseClone). */
+MObject* m_clone(MObject* object);
 
-/* ---- Errors --------------------------------------------------------------------------------- */
+/* ---- Exceptions ----------------------------------------------------------------------------- */
 
-/* Exceptions cannot be caught yet (IL2C-2): an exception ends the program like an unhandled one. */
+/*
+ * Every try block (with catch, filter or finally clauses) running pushes a frame; m_throw jumps
+ * to the innermost one with longjmp, after popping it. The generated code then picks the clause
+ * (or runs the finally block and throws again). Without a frame, the exception is unhandled: the
+ * program ends like a .NET one (message on stderr, exit code 134).
+ */
+typedef struct MFrame {
+    struct MFrame* previous;
+    MObject* exception;
+    jmp_buf jump;
+} MFrame;
+
+extern MFrame* m_frames;
+
+static inline void m_push_frame(MFrame* frame)
+{
+    frame->previous = m_frames;
+    frame->exception = NULL;
+    m_frames = frame;
+}
+
+static inline void m_pop_frame(MFrame* frame) { m_frames = frame->previous; }
+
+/* Generated: an exception object of a corlib type, by name (System.Exception when unknown). */
+MObject* m_new_exception(const char* typeName, const char* message);
+
 _Noreturn void m_throw(MObject* exception);
 _Noreturn void m_throw_named(const char* typeName, const char* message);
 _Noreturn void m_throw_null(void);

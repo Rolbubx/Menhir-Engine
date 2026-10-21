@@ -24,6 +24,9 @@ namespace Tests
             else if (name == "enums") Enums.Run();
             else if (name == "pointers") Pointers.Run();
             else if (name == "generics") Generics.Run();
+            else if (name == "interfaces") Interfaces.Run();
+            else if (name == "exceptions") Exceptions.Run();
+            else if (name == "delegates") Delegates.Run();
             else if (name == "throw" || name == "index" || name == "null" || name == "divide" || name == "cast") Throws.Run(name);
             else
             {

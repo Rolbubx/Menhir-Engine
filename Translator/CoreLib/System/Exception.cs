@@ -100,3 +100,39 @@ namespace System
         public InvalidCastException(string message) : base(message) { }
     }
 }
+
+namespace System
+{
+    public class FormatException : SystemException
+    {
+        public FormatException() { }
+        public FormatException(string message) : base(message) { }
+    }
+
+    public class ArrayTypeMismatchException : SystemException
+    {
+        public ArrayTypeMismatchException() { }
+        public ArrayTypeMismatchException(string message) : base(message) { }
+    }
+
+    public class InvalidProgramException : SystemException
+    {
+        public InvalidProgramException() { }
+        public InvalidProgramException(string message) : base(message) { }
+    }
+
+    public class EntryPointNotFoundException : SystemException
+    {
+        public EntryPointNotFoundException() { }
+        public EntryPointNotFoundException(string message) : base(message) { }
+    }
+}
+
+namespace System.Collections.Generic
+{
+    public class KeyNotFoundException : SystemException
+    {
+        public KeyNotFoundException() { }
+        public KeyNotFoundException(string message) : base(message) { }
+    }
+}

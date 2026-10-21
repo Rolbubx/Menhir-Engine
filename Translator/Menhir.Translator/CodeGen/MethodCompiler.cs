@@ -36,7 +36,9 @@ public sealed class MethodCompiler
 
     /// <param name="Type">Static type: the object's type, the struct, or the type a pointer points to.</param>
     /// <param name="NonNull">Known not to be null (this, new objects): no null check needed.</param>
-    private readonly record struct Entry(Kind Kind, TypeDesc? Type = null, bool NonNull = false, FieldDesc? Field = null);
+    /// <param name="Method">For a function pointer pushed by ldftn / ldvirtftn: the method (delegate creation needs it).</param>
+    private readonly record struct Entry(Kind Kind, TypeDesc? Type = null, bool NonNull = false, FieldDesc? Field = null,
+        MethodDesc? Method = null);
 
     private readonly Il2cTranslator _translator;
     private readonly TypeSystemContext _context;
@@ -55,9 +57,14 @@ public sealed class MethodCompiler
     private readonly List<ExceptionRegion> _regions;
     private readonly Dictionary<int, Dictionary<int, int>> _finallyTargets = new();
 
+    /// <summary>Try blocks: a try range and its clauses (catch / filter, or one finally / fault).</summary>
+    private readonly List<(int TryOffset, int TryLength, List<int> Clauses)> _blocks = new();
+    private readonly bool _hasExceptionHandling;
+
     private List<Entry> _stack = new();
     private Instruction _current;
     private TypeDesc? _constrained;
+    private MethodDesc? _lastFunction;
     private int _temp;
 
     public MethodCompiler(Il2cTranslator translator, MethodDesc method)
@@ -76,14 +83,30 @@ public sealed class MethodCompiler
         if (!method.IsStatic)
             _args.Add(method.Owner.IsValueType ? _context.MakeByRef(method.Owner) : method.Owner);
         _args.AddRange(method.ParameterTypes);
+
+        for (int i = 0; i < _regions.Count; i++)
+        {
+            ExceptionRegion region = _regions[i];
+            int block = _blocks.FindIndex(b => b.TryOffset == region.TryOffset && b.TryLength == region.TryLength);
+            if (block < 0)
+                _blocks.Add((region.TryOffset, region.TryLength, [i]));
+            else
+                _blocks[block].Clauses.Add(i);
+        }
+        _hasExceptionHandling = _regions.Count > 0;
     }
+
+    /// <summary>
+    /// Argument variable. In methods with try blocks, arguments are copied to volatile variables:
+    /// longjmp only keeps the values of volatile variables changed after setjmp.
+    /// </summary>
+    private string Arg(int index) => _hasExceptionHandling ? $"va{index}" : $"a{index}";
+
+    private string Volatile => _hasExceptionHandling ? " volatile" : "";
 
     public string Compile()
     {
         CollectLabels();
-
-        if (_regions.Any(r => r.Kind is ExceptionRegionKind.Filter or ExceptionRegionKind.Fault))
-            throw new TranslationException("Exception filters and fault blocks are not supported yet (IL2C-2).");
 
         // Static methods and constructors trigger the static constructor (the type's own
         // static constructor excepted).
@@ -106,19 +129,36 @@ public sealed class MethodCompiler
             }
             if (_labels.Contains(instruction.Offset))
                 _code.Append($"IL_{instruction.Offset:x4}:;\n");
+            EnterTryBlocks(instruction.Offset);
             TranslateInstruction(instruction);
             reachable = !instruction.EndsBlock;
         }
 
+        string dispatch = _hasExceptionHandling ? Dispatch() : "";
+
         var function = new StringBuilder();
         function.Append(_translator.Prototype(_method)).Append("\n{\n");
+        if (_hasExceptionHandling)
+        {
+            for (int i = 0; i < _args.Count; i++)
+            {
+                string type = i == 0 && !_method.IsStatic ? _translator.ThisCType(_method.Owner) : _translator.CType(_args[i]);
+                function.Append($"    {type} volatile va{i} = a{i};\n");
+            }
+            for (int b = 0; b < _blocks.Count; b++)
+                function.Append($"    MFrame fr{b};\n");
+            for (int r = 0; r < _regions.Count; r++)
+                function.Append($"    MObject* volatile ex{r} = NULL;\n");
+        }
         for (int i = 0; i < _locals.Length; i++)
-            function.Append($"    {_translator.CType(_locals[i])} l{i};\n    memset(&l{i}, 0, sizeof l{i});\n");
+            function.Append($"    {_translator.CType(_locals[i])}{Volatile} l{i};\n    memset((void*)&l{i}, 0, sizeof l{i});\n");
         foreach ((string name, string type) in _variables)
-            function.Append($"    {type} {name};\n");
-        foreach (int region in _finallyTargets.Keys)
-            function.Append($"    int fin{region}_next = 0;\n");
+            function.Append($"    {type}{Volatile} {name};\n");
+        foreach (int region in _finallyTargets.Keys.Union(_regions.Select((r, i) => (r, i))
+                     .Where(x => x.r.Kind is ExceptionRegionKind.Finally or ExceptionRegionKind.Fault).Select(x => x.i)))
+            function.Append($"    int volatile fin{region}_next = 0;\n");
         function.Append(_code);
+        function.Append(dispatch);
         function.Append("}\n");
         return function.ToString();
     }
@@ -138,7 +178,83 @@ public sealed class MethodCompiler
             }
         }
         foreach (ExceptionRegion region in _regions)
+        {
             _labels.Add(region.HandlerOffset);
+            if (region.Kind == ExceptionRegionKind.Filter)
+                _labels.Add(region.FilterOffset);
+        }
+    }
+
+    // ---- Exceptions ---------------------------------------------------------------------------
+
+    /// <summary>Entering try blocks (outermost first): push their frame; an exception comes back to their dispatch.</summary>
+    private void EnterTryBlocks(int offset)
+    {
+        foreach (int b in Enumerable.Range(0, _blocks.Count).Where(b => _blocks[b].TryOffset == offset)
+                     .OrderByDescending(b => _blocks[b].TryLength))
+        {
+            Emit($"m_push_frame(&fr{b});");
+            Emit($"if (setjmp(fr{b}.jump) != 0) goto dispatch{b};");
+        }
+    }
+
+    /// <summary>
+    /// Where an exception thrown in a try block lands: the first catch whose type matches (or whose
+    /// filter accepts it), or the finally / fault block, which throws it again when it ends.
+    /// </summary>
+    private string Dispatch()
+    {
+        string exceptionVar = Var(0, new Entry(Kind.Ref, _context.ObjectType));
+        var code = new StringBuilder();
+        for (int b = 0; b < _blocks.Count; b++)
+        {
+            code.Append($"dispatch{b}:;\n");
+            foreach (int r in _blocks[b].Clauses)
+            {
+                ExceptionRegion region = _regions[r];
+                code.Append($"    ex{r} = fr{b}.exception;\n");
+                switch (region.Kind)
+                {
+                    case ExceptionRegionKind.Catch:
+                    {
+                        TypeDesc type = _context.ResolveType(_module, region.CatchType, _generics);
+                        code.Append($"    if (m_isinst(ex{r}, &{_translator.TypeInfo(type)}) != NULL) {{ {exceptionVar} = ex{r}; goto IL_{region.HandlerOffset:x4}; }}\n");
+                        break;
+                    }
+                    case ExceptionRegionKind.Filter:
+                        code.Append($"    {exceptionVar} = ex{r};\n    goto IL_{region.FilterOffset:x4};\n");
+                        code.Append($"filter{r}_rejected:;\n");
+                        break;
+                    default:
+                        code.Append($"    fin{r}_next = -1;\n    goto IL_{region.HandlerOffset:x4};\n");
+                        break;
+                }
+            }
+            code.Append($"    m_throw(fr{b}.exception);\n");
+        }
+        return code.ToString();
+    }
+
+    private void EndFilter()
+    {
+        var (_, v) = Pop();
+        int r = _regions.FindIndex(x => x.Kind == ExceptionRegionKind.Filter &&
+                                        _current.Offset >= x.FilterOffset && _current.Offset < x.HandlerOffset);
+        string exceptionVar = Var(0, new Entry(Kind.Ref, _context.ObjectType));
+        Emit($"if ({v} != 0) {{ {exceptionVar} = ex{r}; goto IL_{_regions[r].HandlerOffset:x4}; }}");
+        Emit($"goto filter{r}_rejected;");
+        _stack.Clear();
+    }
+
+    /// <summary>rethrow: the exception of the innermost handler around the instruction.</summary>
+    private void Rethrow()
+    {
+        int r = Enumerable.Range(0, _regions.Count)
+            .Where(i => Inside(_current.Offset, _regions[i].HandlerOffset, _regions[i].HandlerLength))
+            .OrderBy(i => _regions[i].HandlerLength)
+            .FirstOrDefault(-1);
+        Emit(r >= 0 ? $"m_throw(ex{r});" : "m_throw_named(\"System.InvalidProgramException\", \"rethrow outside a catch block.\");");
+        _stack.Clear();
     }
 
     /// <summary>The stack when a handler starts: the exception for catch blocks, empty for finally.</summary>
@@ -148,9 +264,14 @@ public sealed class MethodCompiler
         {
             if (region.HandlerOffset != offset)
                 continue;
-            return region.Kind == ExceptionRegionKind.Catch
+            return region.Kind is ExceptionRegionKind.Catch or ExceptionRegionKind.Filter
                 ? [new Entry(Kind.Ref, _context.ObjectType, NonNull: true)]
                 : new List<Entry>();
+        }
+        foreach (ExceptionRegion region in _regions)
+        {
+            if (region.Kind == ExceptionRegionKind.Filter && region.FilterOffset == offset)
+                return [new Entry(Kind.Ref, _context.ObjectType, NonNull: true)];
         }
         return null;
     }
@@ -175,6 +296,11 @@ public sealed class MethodCompiler
     {
         _stack.Clear();
         int from = _current.Offset;
+        // Leaving try blocks: their frames go, innermost first.
+        foreach (int b in Enumerable.Range(0, _blocks.Count)
+                     .Where(b => Inside(from, _blocks[b].TryOffset, _blocks[b].TryLength) && !Inside(target, _blocks[b].TryOffset, _blocks[b].TryLength))
+                     .OrderBy(b => _blocks[b].TryLength))
+            Emit($"m_pop_frame(&fr{b});");
         var finallys = _regions
             .Select((region, index) => (region, index))
             .Where(r => r.region.Kind == ExceptionRegionKind.Finally &&
@@ -208,9 +334,12 @@ public sealed class MethodCompiler
 
     private void EndFinally()
     {
-        int index = _regions.FindIndex(r => r.Kind == ExceptionRegionKind.Finally &&
-                                             Inside(_current.Offset, r.HandlerOffset, r.HandlerLength));
-        var builder = new StringBuilder($"switch (fin{index}_next) {{");
+        int index = Enumerable.Range(0, _regions.Count)
+            .Where(i => _regions[i].Kind is ExceptionRegionKind.Finally or ExceptionRegionKind.Fault &&
+                        Inside(_current.Offset, _regions[i].HandlerOffset, _regions[i].HandlerLength))
+            .OrderBy(i => _regions[i].HandlerLength)
+            .First();
+        var builder = new StringBuilder($"switch (fin{index}_next) {{ case -1: m_throw(ex{index});");
         if (_finallyTargets.TryGetValue(index, out Dictionary<int, int>? targets))
         {
             foreach ((int offset, int id) in targets)
@@ -358,11 +487,11 @@ public sealed class MethodCompiler
             case ILOpCode.Starg:
             {
                 var (entry, v) = Pop();
-                Emit($"a{ins.Operand} = {ToStorage(_args[(int)ins.Operand], entry, v)};");
+                Emit($"{Arg((int)ins.Operand)} = {ToStorage(_args[(int)ins.Operand], entry, v)};");
                 break;
             }
             case ILOpCode.Ldarga_s:
-            case ILOpCode.Ldarga: Push(new Entry(Kind.ByRef, _args[(int)ins.Operand], NonNull: true), $"(void*)&a{ins.Operand}"); break;
+            case ILOpCode.Ldarga: Push(new Entry(Kind.ByRef, _args[(int)ins.Operand], NonNull: true), $"(void*)&{Arg((int)ins.Operand)}"); break;
             case ILOpCode.Ldloc_0: LoadLocal(0); break;
             case ILOpCode.Ldloc_1: LoadLocal(1); break;
             case ILOpCode.Ldloc_2: LoadLocal(2); break;
@@ -550,10 +679,8 @@ public sealed class MethodCompiler
                 _stack.Clear();
                 break;
             }
-            case ILOpCode.Rethrow:
-                Emit("m_throw_named(\"System.Exception\", \"rethrow\");");
-                _stack.Clear();
-                break;
+            case ILOpCode.Rethrow: Rethrow(); break;
+            case ILOpCode.Endfilter: EndFilter(); break;
 
             // Objects and fields
             case ILOpCode.Newobj: NewObject(ResolveMethod(ins)); break;
@@ -705,11 +832,37 @@ public sealed class MethodCompiler
             case ILOpCode.Castclass:
             {
                 TypeDesc type = ResolveType(ins);
-                if (type.IsInterface)
-                    throw Unsupported("casts to interfaces are not supported yet (IL2C-2)");
                 var (e, v) = Pop();
                 string function = ins.OpCode == ILOpCode.Isinst ? "m_isinst" : "m_castclass";
                 Push(new Entry(Kind.Ref, type), $"{function}({v}, &{TypeInfoFor(type)})");
+                break;
+            }
+
+            // Function pointers (delegates)
+            case ILOpCode.Ldftn:
+            {
+                MethodDesc method = ResolveMethod(ins);
+                // A delegate to a struct's method holds the boxed struct: its function takes the box.
+                string name = method.Owner.IsValueType && !method.IsStatic ? _translator.UnboxingStubName(method) : _names.Method(method);
+                Push(new Entry(Kind.NI, Method: method), $"(intptr_t)&{name}");
+                break;
+            }
+            case ILOpCode.Ldvirtftn:
+            {
+                MethodDesc method = ResolveMethod(ins);
+                var (e, v) = Pop();
+                string function;
+                if (method.Owner.IsInterface)
+                    function = $"(intptr_t)m_interface_method({v}, &{_translator.TypeInfo(method.Owner)}, {Il2cTranslator.InterfaceSlot(method)})";
+                else if (method.IsVirtual && method.VTableSlot >= 0)
+                {
+                    Emit($"M_NULL_CHECK({v});");
+                    function = $"(intptr_t)((MObject*){v})->type->vtable[{method.VTableSlot}]";
+                }
+                else
+                    function = $"(intptr_t)&{_names.Method(method)}";
+                // The real target is only known at run time: as for a virtual call, its this is the object.
+                Push(new Entry(Kind.NI, Method: method), function);
                 break;
             }
 
@@ -767,10 +920,10 @@ public sealed class MethodCompiler
         TypeDesc type = _args[index];
         if (isThis && type.IsByRef)
         {
-            Push(new Entry(Kind.ByRef, type.ElementType, NonNull: true), "(void*)a0");
+            Push(new Entry(Kind.ByRef, type.ElementType, NonNull: true), $"(void*){Arg(0)}");
             return;
         }
-        PushFrom(type, $"a{index}", nonNull: isThis);
+        PushFrom(type, Arg(index), nonNull: isThis);
     }
 
     private void LoadLocal(int index) => PushFrom(_locals[index], $"l{index}");
@@ -893,7 +1046,8 @@ public sealed class MethodCompiler
         };
         string temp = $"t{_temp++}";
         _variables[temp] = type;
-        Emit($"M_CHECKED({op}, ({type}){va}, ({type}){vb}, &{temp});");
+        // A plain variable for the builtin (temps are volatile in methods with try blocks).
+        Emit($"{{ {type} r; M_CHECKED({op}, ({type}){va}, ({type}){vb}, &r); {temp} = r; }}");
         Push(result, $"({KindCType(result)}){temp}");
     }
 
@@ -1174,7 +1328,7 @@ public sealed class MethodCompiler
             return;
         }
         string temp = Temp(_translator.CType(type), ToStorage(type, e, v));
-        Push(new Entry(Kind.Ref, type, NonNull: true), $"m_box(&{_translator.TypeInfo(type)}, &{temp})");
+        Push(new Entry(Kind.Ref, type, NonNull: true), $"m_box(&{_translator.TypeInfo(type)}, (void*)&{temp})");
     }
 
     // ---- Calls --------------------------------------------------------------------------------
@@ -1182,7 +1336,9 @@ public sealed class MethodCompiler
     private void NewObject(MethodDesc constructor)
     {
         TypeDesc type = constructor.Owner;
-        var args = PopArguments(constructor.ParameterTypes.Count);
+        MethodDesc? function = _stack.Count > 0 && _stack[^1].Kind == Kind.NI ? _stack[^1].Method : null;
+        _lastFunction = function;
+        var args = PopArguments(constructor.ParameterTypes.Count, constructor.ParameterTypes);
         string init = _translator.ClassInitCall(type);
         if (init.Length > 0 && _method.Owner != type)
             Emit(init);
@@ -1191,8 +1347,8 @@ public sealed class MethodCompiler
         {
             string temp = $"t{_temp++}";
             _variables[temp] = _translator.CType(type);
-            Emit($"memset(&{temp}, 0, sizeof {temp});");
-            Emit($"{_names.Method(constructor)}({string.Join(", ", args.Prepend($"&{temp}"))});");
+            Emit($"memset((void*)&{temp}, 0, sizeof {temp});");
+            Emit($"{_names.Method(constructor)}({string.Join(", ", args.Prepend($"(void*)&{temp}"))});");
             PushFrom(type, temp);
             return;
         }
@@ -1200,6 +1356,8 @@ public sealed class MethodCompiler
             throw Unsupported("new string(...) is not supported yet");
         string obj = Temp("MObject*", $"m_new_object(&{_translator.TypeInfo(type)})");
         Emit($"{_names.Method(constructor)}({string.Join(", ", args.Prepend($"({_translator.CType(type)}){obj}"))});");
+        if (_translator.IsDelegate(type) && _lastFunction is { IsStatic: true })
+            Emit($"(({_translator.CType(type)}){obj})->{_translator.DelegateField("_isStatic")} = true;");
         Push(new Entry(Kind.Ref, type, NonNull: true), obj);
     }
 
@@ -1217,8 +1375,8 @@ public sealed class MethodCompiler
     {
         if (target.IsGeneric && target.IsVirtual && virtualCall && !target.IsFinal && !target.Owner.IsSealed)
             throw Unsupported($"virtual generic methods ({target.Owner.Name}.{target.Name}) are not supported yet");
-        if (target.Owner.IsInterface)
-            throw Unsupported($"interface calls ({target.Owner.Name}.{target.Name}) are not supported yet (IL2C-2)");
+        if (target.Owner.IsInterface && target.IsGeneric && !target.IsStatic)
+            throw Unsupported($"generic interface methods ({target.Owner.Name}.{target.Name}) are not supported yet");
 
         // RuntimeHelpers.InitializeArray(array, ldtoken field): copy the constant data directly.
         if (target.Name == "InitializeArray" && target.Owner.FullName == "System.Runtime.CompilerServices.RuntimeHelpers")
@@ -1243,7 +1401,11 @@ public sealed class MethodCompiler
                 if (constrained.IsValueType)
                 {
                     // A struct's own override is called directly on the value; otherwise the value is boxed.
-                    MethodDesc? implementation = target.IsVirtual ? _translator.Implementation(constrained, target) : target;
+                    MethodDesc? implementation = target.Owner.IsInterface
+                        ? _translator.InterfaceImplementation(constrained, target)
+                        : target.IsVirtual ? _translator.Implementation(constrained, target) : target;
+                    if (implementation != null)
+                        _translator.RequireMethod(implementation);
                     if (implementation != null && implementation.Owner == constrained)
                     {
                         call = $"{_names.Method(implementation)}({string.Join(", ", args.Prepend($"({_translator.ThisCType(constrained)}){thisVar}"))})";
@@ -1282,6 +1444,15 @@ public sealed class MethodCompiler
 
     private string VirtualOrDirect(MethodDesc target, string thisVar, List<string> args, bool nonNull, bool virtualCall)
     {
+        if (target.Owner.IsInterface)
+        {
+            // Interface call: the implementation comes from the object's type's interface map.
+            var types = new List<string> { "void*" };
+            types.AddRange(target.ParameterTypes.Select(_translator.CType));
+            string pointer = $"{_translator.CType(target.ReturnType)} (*)({string.Join(", ", types)})";
+            string lookup = $"m_interface_method((MObject*){thisVar}, &{_translator.TypeInfo(target.Owner)}, {Il2cTranslator.InterfaceSlot(target)})";
+            return $"(({pointer}){lookup})({string.Join(", ", args.Prepend($"(void*){thisVar}"))})";
+        }
         if (virtualCall && !nonNull)
             Emit($"M_NULL_CHECK({thisVar});");
         string thisArg = $"({_translator.ThisCType(target.Owner)}){thisVar}";

@@ -110,6 +110,14 @@ MObject* m_box(const MType* valueType, const void* value)
 
 bool m_is_subclass(const MType* type, const MType* target)
 {
+    if (target->flags & M_TYPE_INTERFACE) {
+        if (type == target)
+            return true;
+        for (uint32_t i = 0; i < type->interfaceCount; i++)
+            if (type->interfaces[i].interfaceType == target)
+                return true;
+        return false;
+    }
     for (const MType* t = type; t != NULL; t = t->base) {
         if (t == target)
             return true;
@@ -154,9 +162,35 @@ void m_check_array_store(MArray* array, MObject* value)
         m_throw_named("System.ArrayTypeMismatchException", "Attempted to access an element as a type incompatible with the array.");
 }
 
-/* ---- Errors --------------------------------------------------------------------------------- */
+void* m_interface_method(MObject* object, const MType* interfaceType, uint32_t slot)
+{
+    if (object == NULL)
+        m_throw_null();
+    const MType* type = object->type;
+    for (uint32_t i = 0; i < type->interfaceCount; i++)
+        if (type->interfaces[i].interfaceType == interfaceType)
+            return type->interfaces[i].methods[slot];
+    m_throw_invalid_cast();
+}
+
+MObject* m_clone(MObject* object)
+{
+    const MType* type = object->type;
+    size_t size = type->instanceSize;
+    if (type->flags & M_TYPE_ARRAY)
+        size = offsetof(MArray, data) + (size_t)((MArray*)object)->length * type->elementSize;
+    else if (type == &System_String__type)
+        size = offsetof(MString, chars) + ((size_t)((MString*)object)->length + 1) * sizeof(uint16_t);
+    MObject* copy = m_alloc(size, (type->flags & M_TYPE_NO_REFERENCES) != 0);
+    memcpy(copy, object, size);
+    return copy;
+}
+
+/* ---- Exceptions ----------------------------------------------------------------------------- */
 
 static void m_write_utf16(FILE* stream, const uint16_t* chars, int32_t length);
+
+MFrame* m_frames;
 
 /* System.Exception's first field is its message (see Translator/CoreLib/System/Exception.cs). */
 typedef struct MException {
@@ -168,6 +202,12 @@ _Noreturn void m_throw(MObject* exception)
 {
     if (exception == NULL)
         m_throw_null();
+    if (m_frames != NULL) {
+        MFrame* frame = m_frames;
+        m_frames = frame->previous;
+        frame->exception = exception;
+        longjmp(frame->jump, 1);
+    }
     fflush(stdout);
     fprintf(stderr, "Unhandled exception. %s", exception->type->name);
     MString* message = ((MException*)exception)->message;
@@ -181,9 +221,7 @@ _Noreturn void m_throw(MObject* exception)
 
 _Noreturn void m_throw_named(const char* typeName, const char* message)
 {
-    fflush(stdout);
-    fprintf(stderr, "Unhandled exception. %s: %s\n", typeName, message);
-    exit(134);
+    m_throw(m_new_exception(typeName, message));
 }
 
 _Noreturn void m_throw_null(void)
@@ -372,3 +410,8 @@ double System_Math__Floor(double d) { return floor(d); }
 double System_Math__Ceiling(double a) { return ceil(a); }
 /* Math.Round rounds half to even by default. */
 double System_Math__Round(double a) { return nearbyint(a); }
+
+MObject* System_Object__MemberwiseClone(MObject* self)
+{
+    return m_clone(self);
+}

@@ -17,6 +17,10 @@ public sealed class Il2cTranslator
     private readonly StringBuilder _rvaDefinitions = new();
     private readonly HashSet<TypeDesc> _arrayTypes = new();
     private readonly List<TypeDesc> _types;
+    private readonly HashSet<TypeDesc> _typeSet;
+    private readonly Queue<MethodDesc> _pending = new();
+    private readonly HashSet<MethodDesc> _requested = new();
+    private readonly List<MethodDesc> _methods = new();
 
     public Il2cTranslator(TypeSystemContext context)
     {
@@ -26,6 +30,7 @@ public sealed class Il2cTranslator
             .OrderBy(t => t.Module == context.CoreLib ? 0 : 1)
             .ThenBy(t => t.FullName, StringComparer.Ordinal)
             .ToList();
+        _typeSet = _types.ToHashSet();
     }
 
     public TypeSystemContext Context { get; }
@@ -40,25 +45,30 @@ public sealed class Il2cTranslator
     /// </summary>
     public string Translate(string? entryPoint)
     {
-        foreach (TypeDesc type in _types)
-            BuildVTable(type);
-
-        // Method bodies first: they register the string literals, arrays and data they use.
-        var bodies = new StringBuilder();
-        foreach (TypeDesc type in _types)
+        foreach (TypeDesc type in _types.ToList())
         {
-            foreach (MethodDesc method in type.Methods)
+            BuildVTable(type);
+            foreach (MethodDesc method in type.Methods.Where(m => !m.IsGeneric))
+                RequireMethod(method);
+        }
+
+        // Method bodies first: they register the string literals, arrays, data, generic
+        // instantiations and methods they use, which are compiled in turn.
+        var bodies = new StringBuilder();
+        while (_pending.TryDequeue(out MethodDesc? method))
+        {
+            RequireType(method.Owner);
+            if (method.IsInternalCall || method.HasBody)
+                _methods.Add(method);
+            if (!method.HasBody || method.IsInternalCall)
+                continue;
+            try
             {
-                if (!method.HasBody || method.IsGeneric || method.IsInternalCall)
-                    continue;
-                try
-                {
-                    bodies.Append(new MethodCompiler(this, method).Compile()).Append('\n');
-                }
-                catch (TranslationException e)
-                {
-                    Errors.Add($"{method}: {e.Message}");
-                }
+                bodies.Append(new MethodCompiler(this, method).Compile()).Append('\n');
+            }
+            catch (TranslationException e)
+            {
+                Errors.Add($"{method}: {e.Message}");
             }
         }
         MethodDesc? entry = entryPoint != null ? FindEntryPoint(entryPoint) : null;
@@ -86,6 +96,51 @@ public sealed class Il2cTranslator
         return c.ToString();
     }
 
+    // ---- Generic instantiations, compiled on demand --------------------------------------------
+
+    /// <summary>
+    /// Makes an instantiated generic type part of the program: its layout, type info, vtable and
+    /// all its methods (definitions are always part of it).
+    /// </summary>
+    public void RequireType(TypeDesc? type)
+    {
+        if (type == null)
+            return;
+        if (type.IsArray || type.IsByRef || type.IsPointer)
+        {
+            RequireType(type.ElementType);
+            return;
+        }
+        if (!type.IsInstantiation || type.ContainsGenericParameters || !_typeSet.Add(type))
+            return;
+        _types.Add(type);
+        RequireType(type.BaseType);
+        foreach (FieldDesc field in type.Fields)
+            RequireType(field.Type);
+        BuildVTable(type);
+        foreach (MethodDesc method in type.Methods.Where(m => !m.IsGeneric))
+            RequireMethod(method);
+    }
+
+    /// <summary>Queues a method for compilation (a generic one only with its type arguments).</summary>
+    public void RequireMethod(MethodDesc method)
+    {
+        if (method.IsOpen)
+            return;
+        RequireType(method.Owner);
+        if (_requested.Add(method))
+            _pending.Enqueue(method);
+    }
+
+    /// <summary>Name of the type info of a type used by the code (arrays and instantiations are then emitted).</summary>
+    public string TypeInfo(TypeDesc type)
+    {
+        if (type.IsArray)
+            UseArrayType(type);
+        RequireType(type);
+        return Names.TypeInfo(type);
+    }
+
     // ---- Types --------------------------------------------------------------------------------
 
     /// <summary>Has a C struct of its own (classes and structs; not primitives, enums or interfaces).</summary>
@@ -95,6 +150,9 @@ public sealed class Il2cTranslator
     /// <summary>The C type a value of this type is stored as (fields, locals, parameters).</summary>
     public string CType(TypeDesc type)
     {
+        if (type.IsGenericParameter)
+            throw new TranslationException($"Generic parameter {type} was not substituted.");
+        RequireType(type);
         if (type.IsByRef || type.IsPointer)
             return type.ElementType!.IsVoid ? "void*" : CType(type.ElementType!) + "*";
         if (type.IsArray)
@@ -321,14 +379,10 @@ public sealed class Il2cTranslator
     private void WritePrototypes(StringBuilder c)
     {
         c.Append("/* ---- Methods (internal calls are implemented by Engine/Runtime) ---- */\n\n");
+        foreach (MethodDesc method in _methods)
+            c.Append(Prototype(method)).Append(";\n");
         foreach (TypeDesc type in _types)
         {
-            foreach (MethodDesc method in type.Methods)
-            {
-                if (method.IsGeneric || (!method.HasBody && !method.IsInternalCall))
-                    continue;
-                c.Append(Prototype(method)).Append(";\n");
-            }
             if (StaticConstructor(type) != null)
                 c.Append($"void {Names.ClassInit(type)}(void);\n");
         }
@@ -400,7 +454,7 @@ public sealed class Il2cTranslator
         c.Append("/* ---- Virtual methods of structs, called on boxed values ---- */\n\n");
         foreach (TypeDesc type in _types.Where(t => t.IsValueType))
         {
-            foreach (MethodDesc method in type.Methods.Where(m => m.IsVirtual && m.HasBody && !m.IsGeneric))
+            foreach (MethodDesc method in type.Methods.Where(m => m.IsVirtual && m.HasBody && !m.IsGeneric && _requested.Contains(m)))
             {
                 var parameters = new List<string> { "MObject* self" };
                 var arguments = new List<string> { $"({ThisCType(type)})M_BOX_DATA(self)" };

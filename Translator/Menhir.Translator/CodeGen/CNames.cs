@@ -31,6 +31,7 @@ public sealed class CNames
             TypeKind.Array => "ArrayOf_" + Type(type.ElementType!),
             TypeKind.ByRef => "RefTo_" + Type(type.ElementType!),
             TypeKind.Pointer => "PointerTo_" + Type(type.ElementType!),
+            TypeKind.Instantiation => Type(type.GenericDefinition!) + "_" + string.Join("_", type.TypeArguments.Select(Type)) + "_",
             _ => Sanitize(type.DeclaringType != null
                 ? Type(type.DeclaringType) + "_" + type.Name
                 : type.Namespace.Length > 0 ? type.Namespace.Replace('.', '_') + "_" + type.Name : type.Name),
@@ -61,8 +62,10 @@ public sealed class CNames
         {
             var overloads = method.Owner.Methods.Where(m => m.Name == method.Name).ToList();
             if (overloads.Count > 1)
-                name += "_" + overloads.IndexOf(method);
+                name += "_" + overloads.FindIndex(m => m.Handle == method.Handle);
         }
+        if (method.MethodArguments.Count > 0)
+            name += "__" + string.Join("_", method.MethodArguments.Select(Type)) + "_";
         _methods[method] = name;
         return name;
     }

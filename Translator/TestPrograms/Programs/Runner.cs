@@ -23,6 +23,7 @@ namespace Tests
             else if (name == "controlflow") ControlFlow.Run();
             else if (name == "enums") Enums.Run();
             else if (name == "pointers") Pointers.Run();
+            else if (name == "generics") Generics.Run();
             else if (name == "throw" || name == "index" || name == "null" || name == "divide" || name == "cast") Throws.Run(name);
             else
             {

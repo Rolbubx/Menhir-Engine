@@ -43,6 +43,7 @@ public sealed class MethodCompiler
     private readonly CNames _names;
     private readonly MethodDesc _method;
     private readonly ModuleDesc _module;
+    private readonly GenericContext _generics;
     private readonly MethodBodyBlock _body;
     private readonly List<Instruction> _instructions;
     private readonly ImmutableArray<TypeDesc> _locals;
@@ -66,9 +67,10 @@ public sealed class MethodCompiler
         _names = translator.Names;
         _method = method;
         _module = method.Owner.Module!;
+        _generics = GenericContext.Of(method);
         _body = method.GetBody();
         _instructions = ILReader.Decode(_body);
-        _locals = _context.DecodeLocals(_module, _body.LocalSignature);
+        _locals = _context.DecodeLocals(_module, _body.LocalSignature, _generics);
         _regions = _body.ExceptionRegions.ToList();
 
         if (!method.IsStatic)
@@ -342,7 +344,7 @@ public sealed class MethodCompiler
             case ILOpCode.Unaligned:
                 break;
             case ILOpCode.Constrained:
-                _constrained = _context.ResolveType(_module, MetadataTokens.EntityHandle(ins.Token));
+                _constrained = _context.ResolveType(_module, MetadataTokens.EntityHandle(ins.Token), _generics);
                 break;
 
             // Arguments and locals
@@ -568,7 +570,7 @@ public sealed class MethodCompiler
                 EntityHandle handle = MetadataTokens.EntityHandle(ins.Token);
                 if (handle.Kind != HandleKind.FieldDefinition && handle.Kind != HandleKind.MemberReference)
                     throw Unsupported("ldtoken of types and methods is not supported yet (IL2C-2)");
-                _stack.Add(new Entry(Kind.FieldToken, Field: _context.ResolveField(_module, handle)));
+                _stack.Add(new Entry(Kind.FieldToken, Field: _context.ResolveField(_module, handle, _generics)));
                 break;
             }
 
@@ -638,7 +640,7 @@ public sealed class MethodCompiler
                 TypeDesc array = _context.MakeArray(ResolveType(ins));
                 _translator.UseArrayType(array);
                 var (e, v) = Pop();
-                Push(new Entry(Kind.Ref, array, NonNull: true), $"(MObject*)m_new_array(&{_names.TypeInfo(array)}, (intptr_t){v})");
+                Push(new Entry(Kind.Ref, array, NonNull: true), $"(MObject*)m_new_array(&{_translator.TypeInfo(array)}, (intptr_t){v})");
                 break;
             }
             case ILOpCode.Ldlen:
@@ -719,16 +721,28 @@ public sealed class MethodCompiler
             _constrained = null;
     }
 
-    private MethodDesc ResolveMethod(Instruction ins) => _context.ResolveMethod(_module, MetadataTokens.EntityHandle(ins.Token));
-    private FieldDesc ResolveField(Instruction ins) => _context.ResolveField(_module, MetadataTokens.EntityHandle(ins.Token));
-    private TypeDesc ResolveType(Instruction ins) => _context.ResolveType(_module, MetadataTokens.EntityHandle(ins.Token));
-
-    private string TypeInfoFor(TypeDesc type)
+    private MethodDesc ResolveMethod(Instruction ins)
     {
-        if (type.IsArray)
-            _translator.UseArrayType(type);
-        return _names.TypeInfo(type);
+        MethodDesc method = _context.ResolveMethod(_module, MetadataTokens.EntityHandle(ins.Token), _generics);
+        _translator.RequireMethod(method);
+        return method;
     }
+
+    private FieldDesc ResolveField(Instruction ins)
+    {
+        FieldDesc field = _context.ResolveField(_module, MetadataTokens.EntityHandle(ins.Token), _generics);
+        _translator.RequireType(field.Owner);
+        return field;
+    }
+
+    private TypeDesc ResolveType(Instruction ins)
+    {
+        TypeDesc type = _context.ResolveType(_module, MetadataTokens.EntityHandle(ins.Token), _generics);
+        _translator.RequireType(type);
+        return type;
+    }
+
+    private string TypeInfoFor(TypeDesc type) => _translator.TypeInfo(type);
 
     private string Temp(string type, string value)
     {
@@ -1160,7 +1174,7 @@ public sealed class MethodCompiler
             return;
         }
         string temp = Temp(_translator.CType(type), ToStorage(type, e, v));
-        Push(new Entry(Kind.Ref, type, NonNull: true), $"m_box(&{_names.TypeInfo(type)}, &{temp})");
+        Push(new Entry(Kind.Ref, type, NonNull: true), $"m_box(&{_translator.TypeInfo(type)}, &{temp})");
     }
 
     // ---- Calls --------------------------------------------------------------------------------
@@ -1168,8 +1182,6 @@ public sealed class MethodCompiler
     private void NewObject(MethodDesc constructor)
     {
         TypeDesc type = constructor.Owner;
-        if (type.IsGenericDefinition)
-            throw Unsupported("generic types are not supported yet (IL2C-2)");
         var args = PopArguments(constructor.ParameterTypes.Count);
         string init = _translator.ClassInitCall(type);
         if (init.Length > 0 && _method.Owner != type)
@@ -1186,7 +1198,7 @@ public sealed class MethodCompiler
         }
         if (type == _context.StringType)
             throw Unsupported("new string(...) is not supported yet");
-        string obj = Temp("MObject*", $"m_new_object(&{_names.TypeInfo(type)})");
+        string obj = Temp("MObject*", $"m_new_object(&{_translator.TypeInfo(type)})");
         Emit($"{_names.Method(constructor)}({string.Join(", ", args.Prepend($"({_translator.CType(type)}){obj}"))});");
         Push(new Entry(Kind.Ref, type, NonNull: true), obj);
     }
@@ -1203,8 +1215,8 @@ public sealed class MethodCompiler
 
     private void Call(MethodDesc target, bool virtualCall)
     {
-        if (target.IsGeneric || target.Owner.IsGenericDefinition)
-            throw Unsupported("generics are not supported yet (IL2C-2)");
+        if (target.IsGeneric && target.IsVirtual && virtualCall && !target.IsFinal && !target.Owner.IsSealed)
+            throw Unsupported($"virtual generic methods ({target.Owner.Name}.{target.Name}) are not supported yet");
         if (target.Owner.IsInterface)
             throw Unsupported($"interface calls ({target.Owner.Name}.{target.Name}) are not supported yet (IL2C-2)");
 
@@ -1238,7 +1250,7 @@ public sealed class MethodCompiler
                     }
                     else
                     {
-                        string boxed = Temp("MObject*", $"m_box(&{_names.TypeInfo(constrained)}, {thisVar})");
+                        string boxed = Temp("MObject*", $"m_box(&{_translator.TypeInfo(constrained)}, {thisVar})");
                         call = VirtualOrDirect(target, boxed, args, nonNull: true, virtualCall);
                     }
                 }

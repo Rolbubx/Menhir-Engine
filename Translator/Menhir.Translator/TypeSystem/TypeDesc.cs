@@ -22,6 +22,10 @@ public enum TypeKind
     ByRef,
     /// <summary>An unmanaged pointer (T*).</summary>
     Pointer,
+    /// <summary>A generic type with its type arguments (List&lt;int&gt;): a class or struct like a definition.</summary>
+    Instantiation,
+    /// <summary>T of a generic type (!0) or method (!!0), in signatures before substitution.</summary>
+    GenericParameter,
 }
 
 /// <summary>The built-in types that map straight to C types.</summary>
@@ -45,11 +49,16 @@ public enum PrimitiveKind
     R8,
 }
 
-/// <summary>A type: a definition from an assembly, or an array, byref or pointer of another type.</summary>
+/// <summary>
+/// A type: a definition from an assembly, a generic instantiation of one, an array, byref or
+/// pointer of another type, or a generic parameter (only in signatures, before substitution).
+/// </summary>
 public sealed class TypeDesc
 {
     private List<FieldDesc>? _fields;
     private List<MethodDesc>? _methods;
+    private TypeDesc? _baseType;
+    private bool _baseTypeLoaded;
 
     internal TypeDesc(TypeSystemContext context, TypeKind kind)
     {
@@ -72,7 +81,18 @@ public sealed class TypeDesc
     // Arrays, byrefs, pointers
     public TypeDesc? ElementType { get; internal init; }
 
-    public bool IsDefinition => Kind == TypeKind.Definition;
+    // Instantiations: the generic definition and the type arguments
+    public TypeDesc? GenericDefinition { get; internal init; }
+    public IReadOnlyList<TypeDesc> TypeArguments { get; internal init; } = [];
+
+    // Generic parameters
+    public int GenericIndex { get; internal init; }
+    public bool IsMethodParameter { get; internal init; }
+
+    /// <summary>A class, struct, enum or interface with metadata: a definition or an instantiation.</summary>
+    public bool IsDefinition => Kind is TypeKind.Definition or TypeKind.Instantiation;
+    public bool IsInstantiation => Kind == TypeKind.Instantiation;
+    public bool IsGenericParameter => Kind == TypeKind.GenericParameter;
     public bool IsArray => Kind == TypeKind.Array;
     public bool IsByRef => Kind == TypeKind.ByRef;
     public bool IsPointer => Kind == TypeKind.Pointer;
@@ -80,8 +100,18 @@ public sealed class TypeDesc
     public bool IsVoid => Primitive == PrimitiveKind.Void;
     public bool IsInterface => IsDefinition && (Attributes & TypeAttributes.Interface) != 0;
     public bool IsAbstract => IsDefinition && (Attributes & TypeAttributes.Abstract) != 0;
+    public bool IsSealed => IsDefinition && (Attributes & TypeAttributes.Sealed) != 0;
     public bool IsBeforeFieldInit => (Attributes & TypeAttributes.BeforeFieldInit) != 0;
-    public bool IsGenericDefinition => IsDefinition && Module!.Reader.GetTypeDefinition(Handle).GetGenericParameters().Count > 0;
+    public bool IsGenericDefinition => Kind == TypeKind.Definition && Module!.Reader.GetTypeDefinition(Handle).GetGenericParameters().Count > 0;
+
+    /// <summary>A generic parameter appears somewhere in the type (it cannot be compiled as is).</summary>
+    public bool ContainsGenericParameters => Kind switch
+    {
+        TypeKind.GenericParameter => true,
+        TypeKind.Instantiation => TypeArguments.Any(a => a.ContainsGenericParameters),
+        TypeKind.Array or TypeKind.ByRef or TypeKind.Pointer => ElementType!.ContainsGenericParameters,
+        _ => IsGenericDefinition,
+    };
 
     /// <summary>Structs, enums and primitives (but not System.ValueType / System.Enum themselves).</summary>
     public bool IsValueType
@@ -110,8 +140,15 @@ public sealed class TypeDesc
         {
             if (!IsDefinition)
                 return IsArray ? Context.ArrayType : null;
-            TypeDefinition definition = Module!.Reader.GetTypeDefinition(Handle);
-            return definition.BaseType.IsNil ? null : Context.ResolveType(Module, definition.BaseType);
+            if (!_baseTypeLoaded)
+            {
+                TypeDefinition definition = Module!.Reader.GetTypeDefinition(Handle);
+                _baseType = definition.BaseType.IsNil
+                    ? null
+                    : Context.Substitute(Context.ResolveType(Module, definition.BaseType), TypeArguments, []);
+                _baseTypeLoaded = true;
+            }
+            return _baseType;
         }
     }
 
@@ -121,6 +158,8 @@ public sealed class TypeDesc
         TypeKind.Array => ElementType!.FullName + "[]",
         TypeKind.ByRef => ElementType!.FullName + "&",
         TypeKind.Pointer => ElementType!.FullName + "*",
+        TypeKind.Instantiation => GenericDefinition!.FullName + "[" + string.Join(",", TypeArguments.Select(a => a.FullName)) + "]",
+        TypeKind.GenericParameter => (IsMethodParameter ? "!!" : "!") + GenericIndex,
         _ => DeclaringType != null
             ? DeclaringType.FullName + "+" + Name
             : Namespace.Length > 0 ? Namespace + "." + Name : Name,
@@ -128,6 +167,21 @@ public sealed class TypeDesc
 
     public IReadOnlyList<FieldDesc> Fields => _fields ??= LoadFields();
     public IReadOnlyList<MethodDesc> Methods => _methods ??= LoadMethods();
+
+    /// <summary>Interfaces the type declares it implements (not those of its base types).</summary>
+    public IEnumerable<TypeDesc> DeclaredInterfaces
+    {
+        get
+        {
+            if (!IsDefinition)
+                yield break;
+            foreach (InterfaceImplementationHandle handle in Module!.Reader.GetTypeDefinition(Handle).GetInterfaceImplementations())
+            {
+                InterfaceImplementation implementation = Module.Reader.GetInterfaceImplementation(handle);
+                yield return Context.Substitute(Context.ResolveType(Module, implementation.Interface), TypeArguments, []);
+            }
+        }
+    }
 
     /// <summary>The underlying integer type of an enum.</summary>
     public TypeDesc EnumUnderlyingType => Fields.First(f => !f.IsStatic).Type;
@@ -166,7 +220,7 @@ public sealed class TypeDesc
             return methods;
         MetadataReader reader = Module!.Reader;
         foreach (MethodDefinitionHandle handle in reader.GetTypeDefinition(Handle).GetMethods())
-            methods.Add(new MethodDesc(this, handle));
+            methods.Add(new MethodDesc(this, handle, []));
         return methods;
     }
 
@@ -198,7 +252,11 @@ public sealed class FieldDesc
 
     public bool HasRva => (Attributes & FieldAttributes.HasFieldRVA) != 0;
 
-    public TypeDesc Type => _type ??= Owner.Context.DecodeFieldType(this);
+    public TypeDesc Type => _type ??= Owner.Context.Substitute(Owner.Context.DecodeFieldType(this), Owner.TypeArguments, []);
+
+    /// <summary>The field as its generic definition declares it (itself for non-generic types).</summary>
+    public FieldDesc Definition =>
+        Owner.IsInstantiation ? Owner.GenericDefinition!.Fields.First(f => f.Handle == Handle) : this;
 
     /// <summary>Raw bytes of a field with an RVA (constant array data).</summary>
     public ReadOnlySpan<byte> GetRvaData(int size)
@@ -214,11 +272,13 @@ public sealed class FieldDesc
 public sealed class MethodDesc
 {
     private MethodSignature<TypeDesc>? _signature;
+    private MethodSignature<TypeDesc>? _formalSignature;
 
-    internal MethodDesc(TypeDesc owner, MethodDefinitionHandle handle)
+    internal MethodDesc(TypeDesc owner, MethodDefinitionHandle handle, IReadOnlyList<TypeDesc> methodArguments)
     {
         Owner = owner;
         Handle = handle;
+        MethodArguments = methodArguments;
         MethodDefinition definition = owner.Module!.Reader.GetMethodDefinition(handle);
         Name = owner.Module.Reader.GetString(definition.Name);
         Attributes = definition.Attributes;
@@ -237,14 +297,31 @@ public sealed class MethodDesc
     public bool IsVirtual => (Attributes & MethodAttributes.Virtual) != 0;
     public bool IsAbstract => (Attributes & MethodAttributes.Abstract) != 0;
     public bool IsNewSlot => (Attributes & MethodAttributes.NewSlot) != 0;
+    public bool IsFinal => (Attributes & MethodAttributes.Final) != 0;
     public bool IsConstructor => Name == ".ctor";
     public bool IsStaticConstructor => Name == ".cctor";
     public bool IsInternalCall => (ImplAttributes & MethodImplAttributes.InternalCall) != 0 ||
                                   (Attributes & MethodAttributes.PinvokeImpl) != 0;
     public bool HasBody => BodyRva != 0;
-    public bool IsGeneric => Owner.Module!.Reader.GetMethodDefinition(Handle).GetGenericParameters().Count > 0;
+    /// <summary>Declares type parameters of its own (instantiated or not).</summary>
+    public bool IsGeneric => GenericArity > 0;
+    public int GenericArity => Owner.Module!.Reader.GetMethodDefinition(Handle).GetGenericParameters().Count;
 
-    public MethodSignature<TypeDesc> Signature => _signature ??= Owner.Context.DecodeMethodSignature(this);
+    /// <summary>The type arguments of a generic method instantiation (empty otherwise).</summary>
+    public IReadOnlyList<TypeDesc> MethodArguments { get; }
+
+    /// <summary>A generic method without its type arguments, or a method of a generic definition: not compiled.</summary>
+    public bool IsOpen => (IsGeneric && MethodArguments.Count == 0) || Owner.ContainsGenericParameters;
+
+    /// <summary>The signature with the owner's and the method's type arguments substituted.</summary>
+    public MethodSignature<TypeDesc> Signature => _signature ??= Owner.Context.SubstituteSignature(FormalSignature, Owner.TypeArguments, MethodArguments);
+
+    /// <summary>The signature as declared, with generic parameters (!0, !!0): what member references match.</summary>
+    public MethodSignature<TypeDesc> FormalSignature => _formalSignature ??= Owner.Context.DecodeMethodSignature(this);
+
+    /// <summary>The method as its generic type declares it, without method arguments.</summary>
+    public MethodDesc Definition =>
+        Owner.IsInstantiation ? Owner.GenericDefinition!.Methods.First(m => m.Handle == Handle) : this;
 
     public TypeDesc ReturnType => Signature.ReturnType;
     public IReadOnlyList<TypeDesc> ParameterTypes => Signature.ParameterTypes;
@@ -260,5 +337,6 @@ public sealed class MethodDesc
         IsStatic == other.IsStatic;
 
     public override string ToString() =>
-        $"{Owner.FullName}::{Name}({string.Join(", ", ParameterTypes.Select(p => p.FullName))})";
+        $"{Owner.FullName}::{Name}{(MethodArguments.Count > 0 ? "<" + string.Join(",", MethodArguments.Select(a => a.FullName)) + ">" : "")}" +
+        $"({string.Join(", ", ParameterTypes.Select(p => p.FullName))})";
 }

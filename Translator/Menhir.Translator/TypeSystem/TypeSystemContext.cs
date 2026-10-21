@@ -8,6 +8,14 @@ namespace Menhir.Translator.TypeSystem;
 /// <summary>Raised for code the translator cannot handle (yet), with a readable reason.</summary>
 public sealed class TranslationException(string message) : Exception(message);
 
+/// <summary>The type arguments that generic parameters stand for while resolving a method's tokens.</summary>
+public readonly record struct GenericContext(IReadOnlyList<TypeDesc> TypeArguments, IReadOnlyList<TypeDesc> MethodArguments)
+{
+    public static GenericContext Empty { get; } = new([], []);
+
+    public static GenericContext Of(MethodDesc method) => new(method.Owner.TypeArguments, method.MethodArguments);
+}
+
 /// <summary>
 /// The loaded assemblies and every type in them, resolved across assemblies. Each type exists
 /// once, so types compare by reference.
@@ -18,6 +26,9 @@ public sealed class TypeSystemContext : IDisposable
     private readonly Dictionary<(ModuleDesc, TypeDefinitionHandle), TypeDesc> _definitions = new();
     private readonly Dictionary<(ModuleDesc, string), TypeDesc> _byName = new();
     private readonly Dictionary<(TypeDesc, TypeKind), TypeDesc> _constructed = new();
+    private readonly Dictionary<string, TypeDesc> _instantiations = new();
+    private readonly Dictionary<string, MethodDesc> _methodInstantiations = new();
+    private readonly Dictionary<(bool, int), TypeDesc> _genericParameters = new();
     private readonly SignatureProvider _signatures;
 
     public TypeSystemContext()
@@ -133,6 +144,109 @@ public sealed class TypeSystemContext : IDisposable
 
     public IEnumerable<TypeDesc> ConstructedTypes => _constructed.Values;
 
+    // ---- Generics -----------------------------------------------------------------------------
+
+    public TypeDesc GetGenericParameter(bool method, int index)
+    {
+        if (!_genericParameters.TryGetValue((method, index), out TypeDesc? type))
+        {
+            type = new TypeDesc(this, TypeKind.GenericParameter) { GenericIndex = index, IsMethodParameter = method, Name = (method ? "!!" : "!") + index };
+            _genericParameters[(method, index)] = type;
+        }
+        return type;
+    }
+
+    /// <summary>The generic type <paramref name="definition"/> with <paramref name="arguments"/> (each instantiation exists once).</summary>
+    public TypeDesc Instantiate(TypeDesc definition, IReadOnlyList<TypeDesc> arguments)
+    {
+        if (definition.IsInstantiation)
+            definition = definition.GenericDefinition!;
+        if (!definition.IsGenericDefinition)
+            throw new TranslationException($"{definition} is not generic.");
+        string key = KeyOf(definition) + "<" + string.Join(",", arguments.Select(KeyOf)) + ">";
+        if (!_instantiations.TryGetValue(key, out TypeDesc? type))
+        {
+            type = new TypeDesc(this, TypeKind.Instantiation)
+            {
+                Module = definition.Module,
+                Handle = definition.Handle,
+                Namespace = definition.Namespace,
+                Name = definition.Name,
+                Attributes = definition.Attributes,
+                DeclaringType = definition.DeclaringType,
+                GenericDefinition = definition,
+                TypeArguments = arguments.ToArray(),
+            };
+            _instantiations[key] = type;
+        }
+        return type;
+    }
+
+    /// <summary>A generic method with its type arguments.</summary>
+    public MethodDesc InstantiateMethod(MethodDesc method, IReadOnlyList<TypeDesc> arguments)
+    {
+        if (!method.IsGeneric)
+            throw new TranslationException($"{method} is not generic.");
+        string key = KeyOf(method.Owner) + "::" + method.Handle.GetHashCode() + "<" + string.Join(",", arguments.Select(KeyOf)) + ">";
+        if (!_methodInstantiations.TryGetValue(key, out MethodDesc? instance))
+        {
+            instance = new MethodDesc(method.Owner, method.Handle, arguments.ToArray());
+            _methodInstantiations[key] = instance;
+        }
+        return instance;
+    }
+
+    public IEnumerable<TypeDesc> Instantiations => _instantiations.Values;
+
+    /// <summary>A key unique per type (module and handle for definitions, so equal names in two assemblies differ).</summary>
+    private static string KeyOf(TypeDesc type) => type.Kind switch
+    {
+        TypeKind.Definition => $"{type.Module!.Name}:{type.FullName}",
+        TypeKind.Instantiation => KeyOf(type.GenericDefinition!) + "<" + string.Join(",", type.TypeArguments.Select(KeyOf)) + ">",
+        TypeKind.Array => KeyOf(type.ElementType!) + "[]",
+        TypeKind.ByRef => KeyOf(type.ElementType!) + "&",
+        TypeKind.Pointer => KeyOf(type.ElementType!) + "*",
+        _ => type.FullName,
+    };
+
+    /// <summary>Replaces generic parameters by the type (!n) and method (!!n) arguments.</summary>
+    public TypeDesc Substitute(TypeDesc type, IReadOnlyList<TypeDesc> typeArguments, IReadOnlyList<TypeDesc> methodArguments)
+    {
+        switch (type.Kind)
+        {
+            case TypeKind.GenericParameter:
+            {
+                IReadOnlyList<TypeDesc> arguments = type.IsMethodParameter ? methodArguments : typeArguments;
+                return type.GenericIndex < arguments.Count ? arguments[type.GenericIndex] : type;
+            }
+            case TypeKind.Array:
+                return MakeArray(Substitute(type.ElementType!, typeArguments, methodArguments));
+            case TypeKind.ByRef:
+                return MakeByRef(Substitute(type.ElementType!, typeArguments, methodArguments));
+            case TypeKind.Pointer:
+                return MakePointer(Substitute(type.ElementType!, typeArguments, methodArguments));
+            case TypeKind.Instantiation:
+                if (!type.ContainsGenericParameters)
+                    return type;
+                return Instantiate(type.GenericDefinition!, type.TypeArguments.Select(a => Substitute(a, typeArguments, methodArguments)).ToArray());
+            default:
+                return type;
+        }
+    }
+
+    public TypeDesc Substitute(TypeDesc type, GenericContext context) =>
+        Substitute(type, context.TypeArguments, context.MethodArguments);
+
+    public MethodSignature<TypeDesc> SubstituteSignature(MethodSignature<TypeDesc> signature, IReadOnlyList<TypeDesc> typeArguments,
+        IReadOnlyList<TypeDesc> methodArguments)
+    {
+        if (typeArguments.Count == 0 && methodArguments.Count == 0)
+            return signature;
+        return new MethodSignature<TypeDesc>(signature.Header, Substitute(signature.ReturnType, typeArguments, methodArguments),
+            signature.RequiredParameterCount, signature.GenericParameterCount,
+            signature.ParameterTypes.Select(p => Substitute(p, typeArguments, methodArguments)).ToImmutableArray());
+    }
+
     // ---- Resolution -------------------------------------------------------------------------
 
     /// <summary>A TypeDefinition, TypeReference or TypeSpecification handle, from <paramref name="module"/>.</summary>
@@ -186,8 +300,14 @@ public sealed class TypeSystemContext : IDisposable
             $"Assembly '{assemblyName}' is referenced but not loaded. Code translated by IL2C must be " +
             "compiled against Menhir.CoreLib, not the .NET libraries (NoStdLib, see Translator/README.md).");
 
-    /// <summary>A MethodDefinition or MemberReference (to a method), used by call instructions.</summary>
-    public MethodDesc ResolveMethod(ModuleDesc module, EntityHandle handle)
+    /// <summary>A type token, with the generic parameters of <paramref name="context"/> substituted.</summary>
+    public TypeDesc ResolveType(ModuleDesc module, EntityHandle handle, GenericContext context) =>
+        Substitute(ResolveType(module, handle), context);
+
+    /// <summary>A MethodDefinition, MemberReference or MethodSpecification (to a method), used by call instructions.</summary>
+    public MethodDesc ResolveMethod(ModuleDesc module, EntityHandle handle) => ResolveMethod(module, handle, GenericContext.Empty);
+
+    public MethodDesc ResolveMethod(ModuleDesc module, EntityHandle handle, GenericContext context)
     {
         switch (handle.Kind)
         {
@@ -202,26 +322,36 @@ public sealed class TypeSystemContext : IDisposable
                 MemberReference reference = module.Reader.GetMemberReference((MemberReferenceHandle)handle);
                 if (reference.Parent.Kind is not (HandleKind.TypeReference or HandleKind.TypeDefinition or HandleKind.TypeSpecification))
                     throw new TranslationException("Unsupported method reference parent.");
-                TypeDesc owner = ResolveType(module, (EntityHandle)reference.Parent);
+                TypeDesc owner = ResolveType(module, (EntityHandle)reference.Parent, context);
                 string name = module.Reader.GetString(reference.Name);
+                // Both signatures as declared (!0, !!0), so they compare whatever the type arguments.
                 MethodSignature<TypeDesc> signature = reference.DecodeMethodSignature(_signatures, module);
                 foreach (MethodDesc candidate in owner.Methods)
                 {
-                    if (candidate.Name == name && candidate.ReturnType == signature.ReturnType &&
-                        candidate.ParameterTypes.SequenceEqual(signature.ParameterTypes) &&
-                        candidate.IsStatic != signature.Header.IsInstance)
+                    MethodSignature<TypeDesc> formal = candidate.FormalSignature;
+                    if (candidate.Name == name && formal.ReturnType == signature.ReturnType &&
+                        formal.ParameterTypes.SequenceEqual(signature.ParameterTypes) &&
+                        candidate.IsStatic != signature.Header.IsInstance &&
+                        candidate.GenericArity == signature.GenericParameterCount)
                         return candidate;
                 }
                 throw new TranslationException($"Method {owner.FullName}::{name} not found (is it in Menhir.CoreLib?).");
             }
             case HandleKind.MethodSpecification:
-                throw new TranslationException("Generic methods are not supported yet (IL2C-2).");
+            {
+                MethodSpecification specification = module.Reader.GetMethodSpecification((MethodSpecificationHandle)handle);
+                MethodDesc method = ResolveMethod(module, specification.Method, context);
+                ImmutableArray<TypeDesc> arguments = specification.DecodeSignature(_signatures, module);
+                return InstantiateMethod(method, arguments.Select(a => Substitute(a, context)).ToArray());
+            }
             default:
                 throw new TranslationException($"Unexpected method handle {handle.Kind}.");
         }
     }
 
-    public FieldDesc ResolveField(ModuleDesc module, EntityHandle handle)
+    public FieldDesc ResolveField(ModuleDesc module, EntityHandle handle) => ResolveField(module, handle, GenericContext.Empty);
+
+    public FieldDesc ResolveField(ModuleDesc module, EntityHandle handle, GenericContext context)
     {
         switch (handle.Kind)
         {
@@ -234,7 +364,7 @@ public sealed class TypeSystemContext : IDisposable
             case HandleKind.MemberReference:
             {
                 MemberReference reference = module.Reader.GetMemberReference((MemberReferenceHandle)handle);
-                TypeDesc owner = ResolveType(module, (EntityHandle)reference.Parent);
+                TypeDesc owner = ResolveType(module, (EntityHandle)reference.Parent, context);
                 string name = module.Reader.GetString(reference.Name);
                 return owner.Fields.FirstOrDefault(f => f.Name == name)
                        ?? throw new TranslationException($"Field {owner.FullName}::{name} not found.");
@@ -255,10 +385,11 @@ public sealed class TypeSystemContext : IDisposable
     internal MethodSignature<TypeDesc> DecodeMethodSignature(MethodDesc method) =>
         method.Owner.Module!.Reader.GetMethodDefinition(method.Handle).DecodeSignature(_signatures, method.Owner.Module);
 
-    public ImmutableArray<TypeDesc> DecodeLocals(ModuleDesc module, StandaloneSignatureHandle handle) =>
+    public ImmutableArray<TypeDesc> DecodeLocals(ModuleDesc module, StandaloneSignatureHandle handle, GenericContext context) =>
         handle.IsNil
             ? ImmutableArray<TypeDesc>.Empty
-            : module.Reader.GetStandaloneSignature(handle).DecodeLocalSignature(_signatures, module);
+            : module.Reader.GetStandaloneSignature(handle).DecodeLocalSignature(_signatures, module)
+                .Select(t => Substitute(t, context)).ToImmutableArray();
 
     private sealed class SignatureProvider(TypeSystemContext context) : ISignatureTypeProvider<TypeDesc, ModuleDesc>
     {
@@ -305,13 +436,11 @@ public sealed class TypeSystemContext : IDisposable
             throw new TranslationException("Multi-dimensional arrays are not supported yet.");
 
         public TypeDesc GetGenericInstantiation(TypeDesc genericType, ImmutableArray<TypeDesc> typeArguments) =>
-            throw new TranslationException($"Generic types ({genericType.FullName}<...>) are not supported yet (IL2C-2).");
+            context.Instantiate(genericType, typeArguments);
 
-        public TypeDesc GetGenericMethodParameter(ModuleDesc genericContext, int index) =>
-            throw new TranslationException("Generic methods are not supported yet (IL2C-2).");
+        public TypeDesc GetGenericMethodParameter(ModuleDesc genericContext, int index) => context.GetGenericParameter(true, index);
 
-        public TypeDesc GetGenericTypeParameter(ModuleDesc genericContext, int index) =>
-            throw new TranslationException("Generic types are not supported yet (IL2C-2).");
+        public TypeDesc GetGenericTypeParameter(ModuleDesc genericContext, int index) => context.GetGenericParameter(false, index);
 
         public TypeDesc GetFunctionPointerType(MethodSignature<TypeDesc> signature) =>
             throw new TranslationException("Function pointers are not supported yet.");

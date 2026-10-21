@@ -89,21 +89,11 @@ public static partial class ScriptCompiler
         if (!File.Exists(csproj) || File.ReadAllText(csproj) != content)
             File.WriteAllText(csproj, content);
 
-        var start = new ProcessStartInfo(DotnetPath()) { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = directory };
-        foreach (string argument in new[] { "build", csproj, "-nologo", "-v", "q", "-clp:NoSummary", "-p:UseSharedCompilation=false" })
-            start.ArgumentList.Add(argument);
-        start.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
-        start.Environment["DOTNET_NOLOGO"] = "1";
         string output;
         int exitCode;
         try
         {
-            using Process process = Process.Start(start) ?? throw new IOException("dotnet did not start.");
-            Task<string> errors = process.StandardError.ReadToEndAsync();
-            output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit();
-            output += errors.Result;
-            exitCode = process.ExitCode;
+            (exitCode, output) = RunDotnet(["build", csproj, "-nologo", "-v", "q", "-clp:NoSummary", "-p:UseSharedCompilation=false"], directory);
         }
         catch (System.ComponentModel.Win32Exception e)
         {
@@ -117,6 +107,22 @@ public static partial class ScriptCompiler
         if (!success && !diagnostics.Any(d => d.IsError))
             diagnostics.Add(new ScriptDiagnostic("", 0, 0, "", "The scripts could not be compiled:\n" + output.Trim(), true));
         return new ScriptCompileResult(success, success ? dll : null, diagnostics, output);
+    }
+
+    /// <summary>Runs the .NET SDK; returns its exit code and output (stdout then stderr).</summary>
+    /// <exception cref="System.ComponentModel.Win32Exception">dotnet could not be started.</exception>
+    public static (int ExitCode, string Output) RunDotnet(IEnumerable<string> arguments, string workingDirectory)
+    {
+        var start = new ProcessStartInfo(DotnetPath()) { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = workingDirectory };
+        foreach (string argument in arguments)
+            start.ArgumentList.Add(argument);
+        start.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
+        start.Environment["DOTNET_NOLOGO"] = "1";
+        using Process process = Process.Start(start) ?? throw new IOException("dotnet did not start.");
+        Task<string> errors = process.StandardError.ReadToEndAsync();
+        string output = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+        return (process.ExitCode, output + errors.Result);
     }
 
     [GeneratedRegex(@"^(?<file>.+?)\((?<line>\d+),(?<column>\d+)\): (?<kind>error|warning) (?<code>\w+): (?<message>.*?)(?: \[[^\]]*\])?$")]

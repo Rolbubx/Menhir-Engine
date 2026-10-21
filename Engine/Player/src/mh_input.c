@@ -15,6 +15,7 @@
 typedef struct {
     unsigned char keys[MH_KEY_CODES], mouse[MH_MOUSE_BUTTONS], pad[MH_GAMEPAD_BUTTONS];
     float mouse_dx, mouse_dy, scroll; /* pixels since the last frame (y down), wheel steps */
+    float mouse_x, mouse_y;           /* the cursor in pixels from the window's bottom-left corner */
     float pad_axes[6];                /* left x, left y (down +1), right x, right y, triggers 0..1 */
 } mh_input_frame;
 
@@ -137,3 +138,71 @@ static int mh_get_button_up(const mh_input *input, const char *name)
 }
 
 static int mh_get_key(const mh_input *input, int code) { return mh_frame_down(&input->current, code); }
+
+static int mh_get_key_down(const mh_input *input, int code)
+{
+    return mh_frame_down(&input->current, code) && !mh_frame_down(&input->previous, code);
+}
+
+static int mh_get_key_up(const mh_input *input, int code)
+{
+    return !mh_frame_down(&input->current, code) && mh_frame_down(&input->previous, code);
+}
+
+/* The code of a key or button name, like the editor's InputCodes.TryParse (case and surrounding
+   spaces ignored): -1 for an empty name, -2 for an unknown one. */
+static int mh_key_code(const char *name)
+{
+    static const struct { const char *name; int code; } named[] = {
+        { "space", 32 }, { "'", 39 }, { ",", 44 }, { "-", 45 }, { ".", 46 }, { "/", 47 }, { ";", 59 }, { "=", 61 },
+        { "[", 91 }, { "\\", 92 }, { "]", 93 }, { "`", 96 },
+        { "escape", 256 }, { "return", 257 }, { "tab", 258 }, { "backspace", 259 }, { "insert", 260 }, { "delete", 261 },
+        { "right", 262 }, { "left", 263 }, { "down", 264 }, { "up", 265 }, { "page up", 266 }, { "page down", 267 },
+        { "home", 268 }, { "end", 269 }, { "caps lock", 280 }, { "pause", 284 },
+        { "[.]", 330 }, { "[/]", 331 }, { "[*]", 332 }, { "[-]", 333 }, { "[+]", 334 }, { "enter", 335 },
+        { "left shift", 340 }, { "left ctrl", 341 }, { "left alt", 342 }, { "left cmd", 343 },
+        { "right shift", 344 }, { "right ctrl", 345 }, { "right alt", 346 }, { "right cmd", 347 },
+    };
+    char key[64], candidate[32];
+    while (*name == ' ' || (*name >= '\t' && *name <= '\r'))
+        name++;
+    size_t length = strlen(name);
+    while (length > 0 && (name[length - 1] == ' ' || (name[length - 1] >= '\t' && name[length - 1] <= '\r')))
+        length--;
+    if (length == 0)
+        return -1;
+    if (length >= sizeof key)
+        return -2;
+    for (size_t i = 0; i < length; i++)
+        key[i] = (char)(name[i] >= 'A' && name[i] <= 'Z' ? name[i] - 'A' + 'a' : name[i]);
+    key[length] = 0;
+
+    if (length == 1 && key[0] >= 'a' && key[0] <= 'z')
+        return 65 + (key[0] - 'a');
+    if (length == 1 && key[0] >= '0' && key[0] <= '9')
+        return 48 + (key[0] - '0');
+    for (int d = 0; d <= 9; d++) {
+        snprintf(candidate, sizeof candidate, "[%d]", d);
+        if (!strcmp(key, candidate))
+            return 320 + d;
+    }
+    for (int f = 1; f <= 12; f++) {
+        snprintf(candidate, sizeof candidate, "f%d", f);
+        if (!strcmp(key, candidate))
+            return 289 + f;
+    }
+    for (size_t i = 0; i < sizeof named / sizeof named[0]; i++)
+        if (!strcmp(key, named[i].name))
+            return named[i].code;
+    for (int m = 0; m < MH_MOUSE_BUTTONS; m++) {
+        snprintf(candidate, sizeof candidate, "mouse %d", m);
+        if (!strcmp(key, candidate))
+            return MH_FIRST_MOUSE_BUTTON + m;
+    }
+    for (int b = 0; b < MH_GAMEPAD_BUTTONS; b++) {
+        snprintf(candidate, sizeof candidate, "joystick button %d", b);
+        if (!strcmp(key, candidate))
+            return MH_FIRST_GAMEPAD_BUTTON + b;
+    }
+    return -2;
+}

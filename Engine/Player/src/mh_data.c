@@ -177,7 +177,25 @@ static void mh_load_game(mh_data *data, mh_game *game)
         a->invert = (int)mh_u32(&r);
         a->axis = clampi((int)mh_u32(&r), 0, 5);
     }
+
+    game->scene_names = mh_alloc(sizeof(char *) * (size_t)maxi(1, game->scene_count));
+    for (int i = 0; i < game->scene_count; i++)
+        game->scene_names[i] = mh_string(&r);
     free(bytes);
+}
+
+/* A scene's build index by name (surrounding spaces ignored, like the editor), -1 when none has it. */
+static int mh_find_scene(const mh_game *game, const char *name)
+{
+    while (*name == ' ' || (*name >= '\t' && *name <= '\r'))
+        name++;
+    size_t length = strlen(name);
+    while (length > 0 && (name[length - 1] == ' ' || (name[length - 1] >= '\t' && name[length - 1] <= '\r')))
+        length--;
+    for (int i = 0; i < game->scene_count; i++)
+        if (strlen(game->scene_names[i]) == length && !strncmp(game->scene_names[i], name, length))
+            return i;
+    return -1;
 }
 
 static void mh_read_post(mh_reader *r, mh_post *p)
@@ -346,6 +364,34 @@ static void mh_load_scene(mh_data *data, int index, mh_scene *scene)
         w->scene = (int)mh_u32(&r);
         w->mode = (int)mh_u32(&r);
     }
+
+    scene->entity_names = mh_alloc(sizeof(char *) * (size_t)maxi(1, scene->entity_count));
+    for (int i = 0; i < scene->entity_count; i++)
+        scene->entity_names[i] = mh_string(&r);
+
+    scene->script_count = mh_count(&r, 12);
+    scene->scripts = mh_alloc(sizeof(mh_script_data) * (size_t)scene->script_count);
+    for (int i = 0; i < scene->script_count; i++) {
+        mh_script_data *d = &scene->scripts[i];
+        MH_ENTITY_INDEX(d->entity);
+        d->class_name = mh_string(&r);
+        d->value_count = mh_count(&r, 8);
+        d->values = mh_alloc(sizeof(mh_script_value) * (size_t)d->value_count);
+        for (int v = 0; v < d->value_count; v++) {
+            mh_script_value *value = &d->values[v];
+            value->name = mh_string(&r);
+            value->kind = (int)mh_u32(&r);
+            if (value->kind == MH_VALUE_BOOL)
+                value->boolean = (int)mh_u32(&r);
+            else if (value->kind == MH_VALUE_NUMBERS) {
+                value->count = mh_count(&r, 4);
+                value->items = mh_alloc(sizeof(char *) * (size_t)maxi(1, value->count));
+                for (int k = 0; k < value->count; k++)
+                    value->items[k] = mh_string(&r);
+            } else
+                value->text = mh_string(&r);
+        }
+    }
 #undef MH_ENTITY_INDEX
     free(bytes);
 }
@@ -372,6 +418,23 @@ static void mh_free_scene(mh_scene *scene)
     for (int i = 0; i < scene->switcher_count; i++)
         free(scene->switchers[i].button);
     free(scene->switchers);
+    for (int i = 0; i < scene->entity_count && scene->entity_names; i++)
+        free(scene->entity_names[i]);
+    free(scene->entity_names);
+    for (int i = 0; i < scene->script_count; i++) {
+        mh_script_data *d = &scene->scripts[i];
+        free(d->class_name);
+        for (int v = 0; v < d->value_count; v++) {
+            mh_script_value *value = &d->values[v];
+            free(value->name);
+            free(value->text);
+            for (int k = 0; k < value->count; k++)
+                free(value->items[k]);
+            free(value->items);
+        }
+        free(d->values);
+    }
+    free(scene->scripts);
     memset(scene, 0, sizeof(*scene));
 }
 

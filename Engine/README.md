@@ -23,13 +23,18 @@ project (git-ignored):
   post-processing stack.
 - `GameData.binchunk`: the game's data in binary chunks (settings, scenes, meshes, textures), read when
   needed. The format is in [Docs/BinChunk.md](../Docs/BinChunk.md).
-- The executable, compiled from `main.c` against GLFW (compiled once into the project's `Cache/Player/`).
+- `scripts.c`, when the project has scripts: the scripts, the scripting API and `Menhir.CoreLib` translated
+  to C by IL2C ([Docs/Scripting.md](../Docs/Scripting.md)).
+- The executable, compiled from `main.c` against GLFW (compiled once into the project's `Cache/Player/`);
+  with scripts, `main.c` is compiled with `MENHIR_SCRIPTS` and linked with `scripts.c`, the runtime and the
+  garbage collector (also compiled once into the cache).
 
 The build includes the scenes ticked in **Project Settings → Build** (all of them when none is, the open
 one first), with the open scene's unsaved changes. The game renders from the scene's first **Camera**
 (or from (0, 1, 10) looking down -Z), at the window size of the build settings. **Esc** quits. Keyboard, mouse
 and the first gamepad drive the Input Manager's axes and buttons, read by the built-in Fly Camera and Scene
-Switcher components, which can also load other scenes ([Docs/Input.md](../Docs/Input.md)).
+Switcher components, which can also load other scenes ([Docs/Input.md](../Docs/Input.md)), and by the
+game's scripts, which run each frame in the same order as in the editor's Play mode.
 
 ```sh
 ./MyGame [--scene n] [--size 1280x720] [--frames n] [--screenshot out.ppm] [--data GameData.binchunk] [--dump]
@@ -37,8 +42,8 @@ Switcher components, which can also load other scenes ([Docs/Input.md](../Docs/I
 
 `--dump` prints the first frame's matrices, lights and shadow maps without opening a window, and
 `--simulate script.txt` plays input events (keys, mouse, gamepad, frames) and prints the axes, the loaded
-scenes and the fly cameras; the editor's tests compile the player with `-DMENHIR_HEADLESS` and compare both
-with what the editor computes.
+scenes, the fly cameras, every entity's transform and the log; the editor's tests compile the player with
+`-DMENHIR_HEADLESS` and compare both with what the editor computes (with scripts: with Play mode).
 
 Building needs GCC or Clang (set in **Project Settings → Build**). On Linux, GLFW uses X11 and needs its
 development headers to compile (Debian/Ubuntu: `libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev
@@ -52,9 +57,10 @@ build files but have not been tried yet.
 | `src/mh_data.h`, `mh_data.c` | The binchunk reader |
 | `src/mh_scene.c` | World matrices, lights and camera (`Scene`, `SceneEnvironment`) |
 | `src/mh_input.c` | The Input Manager (`Input/InputState.cs`) |
-| `src/mh_world.c` | Loaded scenes, scene changes, built-in behaviours (`Runtime/FlyCameraBehaviour.cs`) |
+| `src/mh_world.c` | Loaded scenes, the frame's order, scene changes, built-in behaviours (`Runtime/PlaySession.cs`, `FlyCameraBehaviour.cs`) |
+| `src/mh_scripts.c` | The scripts (`MENHIR_SCRIPTS` builds): creating them, their saved values, callbacks, and the scripting API's internal calls |
 | `src/mh_shadows.c` | Shadow map placement (`ShadowSetup`) |
 | `src/mh_gl.c`, `mh_renderer.c`, `mh_post.c` | OpenGL helpers, scene passes, post-processing (`GLRenderer`, `GLPostProcessor`) |
 | `src/mh_dump.c` | `--dump` and `--simulate` |
 
-Not there yet: scripts (IL2C), audio.
+Not there yet: audio.

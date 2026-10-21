@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text.Json;
 using Menhir.Editor.Assets;
 using Menhir.Editor.Input;
 using Menhir.Editor.Lighting;
@@ -37,7 +38,7 @@ public static class GameDataExporter
             throw new ArgumentException("A build needs at least one scene.", nameof(scenes));
 
         var file = new BinChunkWriter();
-        file.Add(BinChunk.Game, 0, GameChunk(title, scenes.Count, rendering, build, input ?? new InputSettings(), warnings));
+        file.Add(BinChunk.Game, 0, GameChunk(title, scenes, rendering, build, input ?? new InputSettings(), warnings));
 
         var meshes = new Meshes(file, loadModel);
         var textures = new Dictionary<object, uint>(); // FilmGrainType or texture Guid -> chunk id
@@ -48,14 +49,14 @@ public static class GameDataExporter
 
     public static uint MeshId(PrimitiveMesh mesh) => (uint)mesh + 1;
 
-    private static byte[] GameChunk(string title, int sceneCount, RenderingSettings rendering, BuildSettings build,
+    private static byte[] GameChunk(string title, IReadOnlyList<BuildScene> scenes, RenderingSettings rendering, BuildSettings build,
         InputSettings input, List<string> warnings)
     {
         var w = new ChunkWriter();
         w.U32((uint)Math.Clamp(build.WindowWidth, 64, 7680));
         w.U32((uint)Math.Clamp(build.WindowHeight, 64, 4320));
         w.String(title);
-        w.U32((uint)sceneCount);
+        w.U32((uint)scenes.Count);
 
         w.Bool(rendering.MainLightShadows);
         w.U32((uint)rendering.MainLightShadowResolution);
@@ -95,6 +96,10 @@ public static class GameDataExporter
             w.Bool(axis.Invert);
             w.U32((uint)Math.Clamp(axis.Axis, 0, 5));
         }
+
+        // For SceneManager.LoadScene(name).
+        foreach (BuildScene scene in scenes)
+            w.String(scene.Name);
         return w.ToArray();
     }
 
@@ -285,8 +290,61 @@ public static class GameDataExporter
             w.U32((uint)target);
             w.U32((uint)switcher.Mode);
         }
+
+        foreach (Entity entity in entities)
+            w.String(entity.Name);
+
+        // Scripts with their saved field values as JSON gave them; the player converts each to its field's type.
+        var scripts = entities
+            .SelectMany((e, i) => e.Components.OfType<ScriptComponent>().Select(c => (Entity: i, Component: c)))
+            .Where(s => s.Component.ClassName.Length > 0)
+            .ToList();
+        w.U32((uint)scripts.Count);
+        foreach ((int entity, ScriptComponent script) in scripts)
+        {
+            w.U32((uint)entity);
+            w.String(script.ClassName);
+            var values = script.Fields.Where(f => ScriptValueKind(f.Value) != null).ToList();
+            foreach (var skipped in script.Fields.Where(f => ScriptValueKind(f.Value) == null))
+                warnings.Add($"{buildScene.Name}: the value of {script.ClassName}.{skipped.Key} on {entities[entity].Name} " +
+                             "is not a number, boolean, string or list of numbers; it is left out.");
+            w.U32((uint)values.Count);
+            foreach ((string name, JsonElement value) in values)
+            {
+                w.String(name);
+                uint kind = ScriptValueKind(value)!.Value;
+                w.U32(kind);
+                switch (value.ValueKind)
+                {
+                    case JsonValueKind.True or JsonValueKind.False:
+                        w.Bool(value.GetBoolean());
+                        break;
+                    case JsonValueKind.String:
+                        w.String(value.GetString()!);
+                        break;
+                    case JsonValueKind.Array:
+                        w.U32((uint)value.GetArrayLength());
+                        foreach (JsonElement item in value.EnumerateArray())
+                            w.String(item.GetRawText());
+                        break;
+                    default:
+                        w.String(value.GetRawText());
+                        break;
+                }
+            }
+        }
         return w.ToArray();
     }
+
+    /// <summary>MH_VALUE_* of mh_data.h: number, bool, string, list of numbers; null for other JSON.</summary>
+    private static uint? ScriptValueKind(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.Number => 0,
+        JsonValueKind.True or JsonValueKind.False => 1,
+        JsonValueKind.String => 2,
+        JsonValueKind.Array when value.EnumerateArray().All(i => i.ValueKind == JsonValueKind.Number) => 3,
+        _ => null,
+    };
 
     /// <summary>The settings of each pass of GLPostProcessor, in the order it runs them.</summary>
     private static void WritePostProcessing(ChunkWriter w, PostProcessStack stack, uint lut, float lutContribution,

@@ -11,6 +11,8 @@
   <ItemGroup>
     <!-- The scripting API: the editor hosts scripts in Play mode. -->
     <ProjectReference Include="..\..\Engine\Scripting\Menhir.Engine\Menhir.Engine.csproj" />
+    <!-- IL2C: File > Build translates the game's scripts to C. -->
+    <ProjectReference Include="..\..\Translator\Menhir.Translator\Menhir.Translator.csproj" />
   </ItemGroup>
 
 </Project>

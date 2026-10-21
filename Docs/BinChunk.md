@@ -32,6 +32,7 @@ A type and id pair is unique. Unknown chunk types are ignored by readers.
 | `f32` last border, `f32` depth bias, `f32` normal bias | |
 | `u32` soft filter taps | 2, 3 or 4; 0 when the project turns soft shadows off |
 | `u32` axis count, then per axis | The Input Manager ([Input.md](Input.md)): `string` name, `u32` type (0 keys, 1 mouse, 2 joystick), `i32` negative, positive, alt negative, alt positive button codes (−1: none; GLFW key codes, 1000 + mouse button, 2000 + gamepad button), `f32` gravity, dead, sensitivity, `bool` snap, `bool` invert, `u32` axis |
+| `string` × scene count | Scene names, by index (`SceneManager.LoadScene(name)`) |
 
 ## `SCNE` (id = scene index)
 
@@ -67,6 +68,12 @@ A type and id pair is unique. Unknown chunk types are ignored by readers.
    `f32` yaw and `f32` pitch (degrees, from the entity's rotation), `string` horizontal axis, vertical axis,
    look X axis, look Y axis, fast button, `bool` require right mouse button.
 10. Scene switchers: `u32` count, then `u32` entity, `string` button, `u32` scene index, `u32` mode (0 single, 1 additive).
+11. Entity names: `string` per entity.
+12. Scripts ([Scripting.md](Scripting.md)), in entity order then component order: `u32` count, then `u32` entity,
+    `string` class name (as .NET's `Type.FullName`), `u32` value count, then per saved field value `string` field
+    name, `u32` kind and the value as the scene's JSON had it: 0 number (`string`, the number as written),
+    1 boolean (`bool`), 2 string (`string`), 3 list of numbers (`u32` count, then a `string` per number). The game
+    converts each value to its field's type (and warns when it does not fit), like Play mode.
 
 The game computes the rest each frame, like the editor: world matrices, the sun and the lights,
 the camera, shadow cascades and slices, and what depends on the window's size.

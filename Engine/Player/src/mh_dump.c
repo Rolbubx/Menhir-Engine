@@ -91,8 +91,9 @@ static void mh_dump(const mh_game *game, const mh_world *w, int width, int heigh
 }
 
 /* --simulate: plays a script of input events without a window, frame by frame, and prints the
-   state at each "dump" line. Lines: "down <code>", "up <code>", "mouse <dx> <dy>", "scroll <steps>",
-   "pad <axis> <value>", "frame <dt> [count]", "dump"; '#' starts a comment. */
+   state at each "dump" line. Lines: "down <code>", "up <code>", "mouse <dx> <dy>", "pos <x> <y>" (the
+   cursor), "scroll <steps>", "pad <axis> <value>", "frame <dt> [count]", "dump"; '#' starts a comment.
+   The log comes out as "log <level> <message>" lines; Application.Quit prints "quit" and stops. */
 static void mh_simulate(const mh_game *game, mh_world *w, const char *path)
 {
     FILE *f = fopen(path, "r");
@@ -121,15 +122,22 @@ static void mh_simulate(const mh_game *game, mh_world *w, const char *path)
         else if (!strcmp(command, "mouse") && sscanf(line, "%*s %f %f", &a, &b) == 2) {
             frame.mouse_dx = a;
             frame.mouse_dy = b;
+        } else if (!strcmp(command, "pos") && sscanf(line, "%*s %f %f", &a, &b) == 2) {
+            frame.mouse_x = a;
+            frame.mouse_y = b;
         } else if (!strcmp(command, "scroll") && sscanf(line, "%*s %f", &a) == 1)
             frame.scroll = a;
         else if (!strcmp(command, "pad") && sscanf(line, "%*s %d %f", &axis, &a) == 2 && axis >= 0 && axis < 6)
             frame.pad_axes[axis] = a;
         else if (!strcmp(command, "frame") && sscanf(line, "%*s %f %d", &a, &count) >= 1) {
-            for (int i = 0; i < count; i++) {
+            for (int i = 0; i < count && !w->quit; i++) {
                 mh_input_update(&input, &frame, a);
                 mh_world_update(w, &input, a);
                 frame.mouse_dx = frame.mouse_dy = frame.scroll = 0.0f; /* movement is per frame */
+            }
+            if (w->quit) {
+                printf("quit\n");
+                break;
             }
         } else if (!strcmp(command, "dump")) {
             for (int i = 0; i < game->axis_count; i++) {
@@ -153,7 +161,14 @@ static void mh_simulate(const mh_game *game, mh_world *w, const char *path)
                                    e->position.z, e->rotation.x, e->rotation.y, e->rotation.z, e->rotation.w };
                     mh_dump_floats("fly", si * 100 + i, v, 9);
                 }
+                for (int i = 0; i < s->entity_count; i++) {
+                    const mh_entity *e = &s->entities[i];
+                    float v[10] = { e->position.x, e->position.y, e->position.z, e->rotation.x, e->rotation.y,
+                                    e->rotation.z, e->rotation.w, e->scale.x, e->scale.y, e->scale.z };
+                    mh_dump_floats("entity", si * 1000 + i, v, 10);
+                }
             }
+            printf("time %.9g %.9g %d\n", w->time, w->delta_time, w->frame_count);
             printf("end\n");
         } else {
             fprintf(stderr, "menhir: %s: bad line: %s", path, line);

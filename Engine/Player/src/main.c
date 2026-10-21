@@ -10,7 +10,9 @@
      --screenshot <file>  save the last frame as a binary PPM image when the game quits
      --dump               print the first frame's matrices, lights and shadows, without a window
      --simulate <file>    play a script of input events without a window (see mh_dump.c)
-   --dump and --simulate are the only options of a MENHIR_HEADLESS build, used by the editor's tests. */
+   --dump and --simulate are the only options of a MENHIR_HEADLESS build, used by the editor's tests.
+   A game with scripts is built with MENHIR_SCRIPTS, and linked with their C (from IL2C), the
+   runtime (Engine/Runtime) and the collector (Engine/ThirdParty/bdwgc). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +32,9 @@
 #include "mh_shadows.c"
 #include "mh_input.c"
 #include "mh_world.c"
+#ifdef MENHIR_SCRIPTS
+#include "mh_scripts.c"
+#endif
 #include "mh_dump.c"
 
 #ifndef MENHIR_HEADLESS
@@ -135,7 +140,11 @@ static void mh_read_devices(GLFWwindow *window, mh_input_frame *frame, double *l
         frame->mouse[b] = glfwGetMouseButton(window, b) == GLFW_PRESS;
 
     double x, y;
+    int window_width, window_height;
     glfwGetCursorPos(window, &x, &y);
+    glfwGetWindowSize(window, &window_width, &window_height);
+    frame->mouse_x = (float)x;
+    frame->mouse_y = (float)(window_height - y); /* from the bottom, like Unity's mousePosition */
     frame->mouse_dx = *has_last ? (float)(x - *last_x) : 0.0f;
     frame->mouse_dy = *has_last ? (float)(y - *last_y) : 0.0f;
     *last_x = x;
@@ -169,6 +178,13 @@ static void mh_on_glfw_error(int code, const char *description)
 int main(int argc, char **argv)
 {
     mh_options options = mh_parse(argc, argv);
+#ifdef MENHIR_SCRIPTS
+    m_init(); /* the collector, before any script is created */
+#endif
+    if (options.dump)
+        mh_log_mode = MH_LOG_STDERR;
+    else if (options.simulate)
+        mh_log_mode = MH_LOG_PREFIXED;
     char *path = options.data ? NULL : mh_default_data_path(argc > 0 ? argv[0] : "");
     mh_data data;
     mh_data_open(&data, options.data ? options.data : path);
@@ -238,6 +254,8 @@ int main(int argc, char **argv)
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         mh_input_update(&input, &devices, dt);
         mh_world_update(&world, &input, dt);
+        if (world.quit)
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
         if (world.changed)
             mh_renderer_release_unused(&renderer, &world);
         if (world.cursor_captured != captured) {

@@ -39,6 +39,12 @@ public sealed class Il2cTranslator
     public TypeSystemContext Context { get; }
     public CNames Names { get; } = new();
 
+    /// <summary>
+    /// Full name of the base class of a game's scripts ("MenhirEngine.Script"): when set, the C gets
+    /// the m_scripts table the player runs them with (see <see cref="ScriptGlue"/>).
+    /// </summary>
+    public string? ScriptBaseType { get; init; }
+
     /// <summary>Problems found while translating, as "method: reason".</summary>
     public List<string> Errors { get; } = new();
 
@@ -104,6 +110,8 @@ public sealed class Il2cTranslator
         WriteClassInits(c);
         c.Append("/* ---- Methods ---- */\n\n").Append(bodies);
         WriteExceptionFactory(c);
+        if (ScriptBaseType != null)
+            new ScriptGlue(this).Write(c, _types, ScriptBaseType);
         if (entry != null)
             WriteMain(c, entry);
         return c.ToString();

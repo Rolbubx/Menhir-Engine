@@ -211,7 +211,17 @@ public sealed class PlaySession : IEngineHost, IDisposable
             _log(LogLevel.Warning, $"{entity.Name}: the script {component.ClassName} does not exist (or does not compile).");
             return null;
         }
-        var script = (MenhirEngine.Script)Activator.CreateInstance(type)!;
+        MenhirEngine.Script script;
+        try
+        {
+            script = (MenhirEngine.Script)Activator.CreateInstance(type)!;
+        }
+        catch (System.Reflection.TargetInvocationException e) when (e.InnerException is { } inner)
+        {
+            // Like the game's mh_scripts.c: the script is left out.
+            _log(LogLevel.Error, $"{type.Name}..ctor on '{entity.Name}': {inner.GetType().Name}: {inner.Message}");
+            return null;
+        }
         foreach (string field in ScriptFields.Apply(script, component.Fields))
             _log(LogLevel.Warning, $"{entity.Name}: the saved value of {component.ClassName}.{field} does not fit the field; it keeps its default.");
         return script;

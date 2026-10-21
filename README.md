@@ -1,9 +1,10 @@
 # Menhir Engine
 
-A personal game engine. Games are scripted in C#; the editor runs scripts directly on .NET,
-and the IL→C translator (IL2C) plus a native C runtime will produce the final builds.
-**File → Build** already makes a standalone game: one `main.c` (OpenGL + GLFW, the same rendering as the
-editor) and its `GameData.binchunk` ([Engine/README](Engine/README.md)).
+A personal game engine. Games are scripted in C#, like Unity: the editor's Play mode runs the
+scripts on .NET, and **File → Build** makes a native game: one `main.c` (OpenGL + GLFW, the same rendering
+as the editor), its `GameData.binchunk`, and the scripts translated to C by the IL→C translator (IL2C)
+with a small C runtime and a garbage collector ([Engine/README](Engine/README.md),
+[Docs/Scripting.md](Docs/Scripting.md)).
 
 | Folder        | What                                                      |
 |---------------|-----------------------------------------------------------|
@@ -56,6 +57,8 @@ last scene.
 | Ctrl+N         | New scene                                 |
 | Ctrl+S         | Save scene (asks for a name the first time) |
 | Ctrl+Shift+S   | Save scene as                             |
+| Ctrl+P         | Play / stop (Play mode)                   |
+| Ctrl+Shift+P   | Pause / resume                            |
 | Ctrl+B         | Build the game (File → Build)             |
 | Ctrl+Shift+B   | Build and run the game                    |
 | Ctrl+Z         | Undo                                      |
@@ -106,6 +109,21 @@ A component whose type no longer exists is kept as is and saved back unchanged.
 | Mouse wheel              | Change fly speed          |
 
 **Effects** (top right of the viewport) shows or hides the skybox, shadows, post-processing and the grid.
+
+### Scripts and Play mode
+
+Every `.cs` file in `Assets/` is a script of the project; a class deriving from `MenhirEngine.Script`
+can be added to entities (**Add Component → Scripts**), and its public fields show in the Inspector and
+are saved with the scene. **Project → Create → C# Script** makes one from a template (renaming the new file
+renames its class); double-click opens it with the system's editor. The editor compiles the scripts in the
+background (`dotnet build`, when the project opens and whenever a script changes) and lists the errors in the
+Console. See [Docs/Scripting.md](Docs/Scripting.md) for the API.
+
+The **Play** button (top middle, Ctrl+P) runs the game in the editor on copies of the scenes, starting with the
+open one: the **Game** panel shows the game's camera and gets the keyboard, mouse and gamepad while it has the
+focus (**Esc** frees a captured cursor); the Viewport shows the running game too. **Pause** and **Step** (one
+frame) are next to it. Stopping goes back to the scenes as they were: the game never changes them, and edits
+made while playing stay. Play mode waits for the scripts to compile, and does not start while they have errors.
 
 ### Rendering
 

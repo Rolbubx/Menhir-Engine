@@ -23,14 +23,15 @@ public sealed class ScriptAssembly : IDisposable
         _context = context;
         Assembly = assembly;
         ScriptTypes = assembly.GetTypes()
-            .Where(t => t.IsSubclassOf(typeof(MenhirEngine.Script)) && !t.IsAbstract && t.GetConstructor(Type.EmptyTypes) != null)
+            .Where(t => t.IsSubclassOf(typeof(MenhirEngine.Script)) && !t.IsAbstract && !t.ContainsGenericParameters &&
+                        t.GetConstructor(Type.EmptyTypes) != null)
             .OrderBy(t => t.FullName, StringComparer.Ordinal)
             .ToList();
     }
 
     public Assembly Assembly { get; }
 
-    /// <summary>The classes that can be added to entities: non-abstract subclasses of MenhirEngine.Script.</summary>
+    /// <summary>The classes that can be added to entities: non-abstract, non-generic subclasses of MenhirEngine.Script with a public parameterless constructor.</summary>
     public IReadOnlyList<Type> ScriptTypes { get; }
 
     /// <summary>Loads a compiled assembly (read into memory, so the file can be compiled again).</summary>

@@ -97,6 +97,58 @@ MString* m_string_from_utf8(const char* text)
     return s;
 }
 
+char* m_string_to_utf8(const MString* string)
+{
+    int32_t length = string ? string->length : 0;
+    char* out = malloc((size_t)length * 3 + 1);
+    if (!out) {
+        fputs("Out of memory.\n", stderr);
+        exit(134);
+    }
+    size_t used = 0;
+    for (int32_t i = 0; i < length; i++) {
+        uint32_t c = string->chars[i];
+        if (c >= 0xD800 && c <= 0xDBFF && i + 1 < length && string->chars[i + 1] >= 0xDC00 && string->chars[i + 1] <= 0xDFFF)
+            c = 0x10000 + ((c - 0xD800) << 10) + (string->chars[++i] - 0xDC00);
+        else if (c >= 0xD800 && c <= 0xDFFF)
+            c = 0xFFFD; /* lone surrogate */
+        if (c < 0x80) {
+            out[used++] = (char)c;
+        } else if (c < 0x800) {
+            out[used++] = (char)(0xC0 | (c >> 6));
+            out[used++] = (char)(0x80 | (c & 0x3F));
+        } else if (c < 0x10000) {
+            out[used++] = (char)(0xE0 | (c >> 12));
+            out[used++] = (char)(0x80 | ((c >> 6) & 0x3F));
+            out[used++] = (char)(0x80 | (c & 0x3F));
+        } else {
+            /* Two UTF-16 units (6 bytes of room) become four bytes. */
+            out[used++] = (char)(0xF0 | (c >> 18));
+            out[used++] = (char)(0x80 | ((c >> 12) & 0x3F));
+            out[used++] = (char)(0x80 | ((c >> 6) & 0x3F));
+            out[used++] = (char)(0x80 | (c & 0x3F));
+        }
+    }
+    out[used] = 0;
+    return out;
+}
+
+void* m_alloc_roots(size_t size)
+{
+    void* roots = GC_MALLOC_UNCOLLECTABLE(size ? size : 1);
+    if (!roots) {
+        fputs("Out of memory.\n", stderr);
+        exit(134);
+    }
+    memset(roots, 0, size ? size : 1);
+    return roots;
+}
+
+void m_free_roots(void* roots)
+{
+    GC_FREE(roots);
+}
+
 MObject* m_box(const MType* valueType, const void* value)
 {
     MObject* box = m_alloc(offsetof(MBox, data) + valueType->instanceSize,
@@ -197,6 +249,11 @@ typedef struct MException {
     MObject header;
     MString* message;
 } MException;
+
+MString* m_exception_message(MObject* exception)
+{
+    return exception ? ((MException*)exception)->message : NULL;
+}
 
 _Noreturn void m_throw(MObject* exception)
 {

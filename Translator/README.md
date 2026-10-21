@@ -54,24 +54,30 @@ Building needs GCC or Clang. The collector is compiled once (`extra/gc.c`) and c
   `beforefieldinit` rules.
 - Integer division, shifts, overflow checks and float→int conversions follow .NET semantics.
   Floats print the same as .NET (shortest round-trip form).
-- Internal calls (`[MethodImpl(MethodImplOptions.InternalCall)]` in the corlib) are C functions
-  in `Engine/Runtime/src/runtime.c`, named `Namespace_Type__Method`.
-- `try`/`finally` works. An exception cannot be caught yet: it ends the program the same way an
-  unhandled .NET exception does (message on stderr, exit code 134).
+- Generics are compiled per instantiation (each `List<int>`, `List<string>`... gets its own C);
+  interface calls go through a per-type table of the interfaces' methods (default methods included);
+  delegates hold a target and a function pointer.
+- `try` / `catch` / `when` / `finally` use `setjmp` / `longjmp` (see `MFrame` in `runtime.h`); an exception
+  nothing catches ends the program the same way an unhandled .NET one does (message on stderr, exit code 134).
+- Internal calls (`[MethodImpl(MethodImplOptions.InternalCall)]`) are C functions named
+  `Namespace_Type__Method`: the corlib's are in `Engine/Runtime/src/runtime.c`, the scripting API's
+  (`MenhirEngine.Host`) in `Engine/Player/src/mh_scripts.c`.
+- For a game's scripts (`Il2cTranslator.ScriptBaseType = "MenhirEngine.Script"`, used by File → Build), the C
+  has no `main` but an `m_scripts` table: each script class's factory and the fields a scene can set
+  ([Docs/Scripting.md](../Docs/Scripting.md)).
 
 ## Tests
 
 `dotnet test Translator/Menhir.Translator.Tests` translates and builds `TestPrograms` once, then
 runs every program both natively and on .NET. Their output and exit code must match exactly.
+The editor's `PlayerScriptTests` do the same for a game's scripts.
 
-## Limitations and roadmap
+## Limitations
 
-Supported today: classes, inheritance, virtual methods, structs, enums, arrays, strings,
-static constructors, pointers and `stackalloc`, checked arithmetic, `try`/`finally`.
+Supported: classes, inheritance, virtual methods, structs, enums (with their names), arrays, strings,
+static constructors, pointers and `stackalloc`, checked arithmetic, exceptions, generics, interfaces,
+delegates and lambdas, and in the corlib: collections, LINQ, `StringBuilder`, string formatting and parsing
+like .NET's, `Math` / `MathF`, `Random`, `Nullable`, tuples, `typeof` / `GetType()` names.
 
-- **IL2C-2**: catching exceptions, interfaces, generics, delegates and lambdas.
-- **IL2C-3**: collections in the corlib (`List<T>`, `Dictionary<K,V>`...), string formatting,
-  then the engine's scripting API.
-
-Not supported yet: `Enum.ToString` names, `ValueType.Equals`, string interpolation, reflection,
-threads. The generated C uses GCC/Clang built-ins, so MSVC does not work yet.
+Not supported yet: reflection, threads, `async`, `ValueType.Equals` by reflection. The generated C uses
+GCC/Clang built-ins, so MSVC does not work yet.

@@ -11,6 +11,8 @@ public sealed class BuildException(string message) : Exception(message);
 /// compiled once into a static library and kept in the cache folder. Linux builds use X11 (GLFW
 /// loads the X11 libraries when the game starts, so only their development headers are needed to
 /// build). The Windows (MinGW) and macOS settings follow GLFW's build files but are untested.
+/// A game with scripts also links their C (from IL2C) with the runtime (Engine/Runtime) and the
+/// collector (Engine/ThirdParty/bdwgc, compiled once and cached like GLFW).
 /// </summary>
 public sealed class PlayerBuilder
 {
@@ -25,6 +27,11 @@ public sealed class PlayerBuilder
     public string Compiler { get; }
 
     private string GlfwDirectory => Path.Combine(EngineDirectory, "ThirdParty", "glfw");
+    private string GcDirectory => Path.Combine(EngineDirectory, "ThirdParty", "bdwgc");
+    private string RuntimeInclude => Path.Combine(EngineDirectory, "Runtime", "include");
+
+    // No fused multiply-adds, in the player as in the scripts: float results then match the editor's.
+    private static readonly string[] PlayerFlags = ["-std=c99", "-Wall", "-ffp-contract=off"];
 
     public static string ExecutableName(string name) =>
         RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? name + ".exe" : name;
@@ -42,22 +49,60 @@ public sealed class PlayerBuilder
     }
 
     /// <summary>Compiles <paramref name="mainC"/> into <paramref name="executable"/>.</summary>
+    /// <param name="scriptsC">The scripts' C from IL2C, or null for a game without scripts.</param>
     /// <param name="log">Receives a line for each step.</param>
-    public void Build(string mainC, string executable, string cacheDirectory, Action<string>? log = null)
+    public void Build(string mainC, string executable, string cacheDirectory, Action<string>? log = null, string? scriptsC = null)
     {
         string glfw = GlfwLibrary(cacheDirectory, log);
+        List<string> scripts = ScriptObjects(scriptsC, cacheDirectory, log);
         log?.Invoke($"Compiling {Path.GetFileName(mainC)}");
-        var arguments = new List<string>
-        {
-            "-std=c99", "-O2", "-Wall", mainC, "-I", Path.Combine(GlfwDirectory, "include"), glfw, "-o", executable,
-        };
+        var arguments = new List<string>(PlayerFlags) { "-O2", mainC, "-I", Path.Combine(GlfwDirectory, "include") };
+        arguments.AddRange(scripts);
+        arguments.AddRange([glfw, "-o", executable]);
         arguments.AddRange(Platform.LinkFlags);
         Run(arguments);
     }
 
-    /// <summary>Compiles the player without OpenGL or a window (only <c>--dump</c> works), for tests.</summary>
-    public void BuildHeadless(string mainC, string executable) =>
-        Run(["-std=c99", "-O1", "-Wall", "-DMENHIR_HEADLESS", mainC, "-o", executable, "-lm"]);
+    /// <summary>Compiles the player without OpenGL or a window (only <c>--dump</c> and <c>--simulate</c> work), for tests.</summary>
+    public void BuildHeadless(string mainC, string executable, string? scriptsC = null, string? cacheDirectory = null)
+    {
+        List<string> scripts = ScriptObjects(scriptsC, cacheDirectory ?? Path.GetDirectoryName(Path.GetFullPath(executable))!, null);
+        Run([.. PlayerFlags, "-O1", "-DMENHIR_HEADLESS", mainC, .. scripts, "-o", executable, "-lm", "-lpthread"]);
+    }
+
+    /// <summary>
+    /// For a game with scripts: the flags and objects main.c is compiled with (MENHIR_SCRIPTS, the
+    /// scripts, the runtime and the collector); nothing without.
+    /// </summary>
+    private List<string> ScriptObjects(string? scriptsC, string cacheDirectory, Action<string>? log)
+    {
+        if (scriptsC == null)
+            return [];
+        string gc = GcObject(cacheDirectory, log);
+        Directory.CreateDirectory(cacheDirectory);
+        string scriptsObject = Path.Combine(cacheDirectory, Path.GetFileNameWithoutExtension(scriptsC) + ".o");
+        string runtimeObject = Path.Combine(cacheDirectory, "runtime.o");
+        log?.Invoke($"Compiling {Path.GetFileName(scriptsC)}");
+        // The generated code's own flags (wrap-around integers, struct pointer casts...).
+        string[] generated = [.. Menhir.Translator.CodeGen.CBuilder.CompilerFlags, "-I", RuntimeInclude, "-I", Path.Combine(GcDirectory, "include")];
+        Run([.. generated, "-c", scriptsC, "-o", scriptsObject]);
+        Run([.. generated, "-c", Path.Combine(EngineDirectory, "Runtime", "src", "runtime.c"), "-o", runtimeObject]);
+        return ["-DMENHIR_SCRIPTS", "-I", RuntimeInclude, scriptsObject, runtimeObject, gc];
+    }
+
+    private string GcObject(string cacheDirectory, Action<string>? log)
+    {
+        string directory = Path.Combine(cacheDirectory, $"bdwgc-8.2.8-{Platform.Name}");
+        string gc = Path.Combine(directory, "gc.o");
+        if (File.Exists(gc))
+            return gc;
+        log?.Invoke("Compiling the garbage collector (once, then kept in the cache)");
+        Directory.CreateDirectory(directory);
+        string partial = Path.Combine(directory, "gc.tmp.o");
+        Run(["-O2", "-c", Path.Combine(GcDirectory, "extra", "gc.c"), "-I", Path.Combine(GcDirectory, "include"), "-o", partial]);
+        File.Move(partial, gc, overwrite: true);
+        return gc;
+    }
 
     private string GlfwLibrary(string cacheDirectory, Action<string>? log)
     {

@@ -1,17 +1,28 @@
-/* The loaded scenes and the built-in behaviours. The first loaded scene is the active one: its sky,
-   ambient light and post-processing are used; additive scenes add their objects and lights. A scene
-   change asked during a frame happens at the end of that frame's update, like Unity's LoadScene. */
+/* The loaded scenes, their scripts and the built-in behaviours. The first loaded scene is the active
+   one: its sky, ambient light and post-processing are used; additive scenes add their objects and
+   lights. Each frame runs like the editor's Play mode (Runtime/PlaySession.cs): Start for the scripts
+   not started yet, Update, the built-in behaviours, LateUpdate, then the scene change asked for
+   during the frame, like Unity's LoadScene. Scripts exist in MENHIR_SCRIPTS builds (mh_scripts.c). */
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include "mh_data.h"
+#ifdef MENHIR_SCRIPTS
+#include <menhir/runtime.h>
+#endif
 
 #define MH_MAX_LOADED_SCENES 8
 
 typedef struct {
-    int index; /* in the build */
+    int index;  /* in the build */
+    int serial; /* unique per load: entity handles carry it, so handles of unloaded scenes go stale */
     mh_scene scene;
     mat4 *world; /* per entity, updated by mh_world_update_matrices */
     float *fly_yaw, *fly_pitch;
+#ifdef MENHIR_SCRIPTS
+    MObject **scripts;      /* per mh_scene.scripts entry (NULL: not created); memory the collector scans */
+    unsigned char *started; /* Start has run */
+#endif
 } mh_loaded_scene;
 
 typedef struct {
@@ -22,12 +33,58 @@ typedef struct {
     int request_scene, request_mode; /* -1: nothing asked */
     int changed;                     /* scenes were loaded or unloaded (resources to release) */
     int cursor_captured;             /* a fly camera is looking around */
+    int next_serial;
+    float time, delta_time;          /* Time.time and Time.deltaTime */
+    int frame_count;
+    int quit;                        /* Application.Quit was called */
 } mh_world;
+
+enum { MH_LOG_INFO, MH_LOG_WARNING, MH_LOG_ERROR };
+
+/* Where the log goes: messages on stdout, warnings and errors on stderr; --simulate prints all of it
+   on stdout as "log <level> <message>" lines between its dumps; --dump keeps stdout for the dump. */
+enum { MH_LOG_NORMAL, MH_LOG_PREFIXED, MH_LOG_STDERR };
+static int mh_log_mode;
+
+/* Debug.Log and the scripts' errors. */
+static void mh_log(int level, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    FILE *out = mh_log_mode == MH_LOG_PREFIXED || (mh_log_mode == MH_LOG_NORMAL && level == MH_LOG_INFO) ? stdout : stderr;
+    if (mh_log_mode == MH_LOG_PREFIXED)
+        fprintf(out, "log %d ", level);
+    else if (level != MH_LOG_INFO)
+        fputs(level == MH_LOG_WARNING ? "Warning: " : "Error: ", out);
+    vfprintf(out, format, args);
+    fputc('\n', out);
+    fflush(out);
+    va_end(args);
+}
+
+enum { MH_AWAKE, MH_START, MH_UPDATE, MH_LATE_UPDATE };
+
+#ifdef MENHIR_SCRIPTS
+static void mh_scripts_load(mh_world *w, mh_loaded_scene *s);
+static void mh_scripts_unload(mh_loaded_scene *s);
+static void mh_scripts_run(mh_world *w, const mh_input *input, int callback);
+#else
+static void mh_scripts_load(mh_world *w, mh_loaded_scene *s)
+{
+    (void)w;
+    for (int i = 0; i < s->scene.script_count; i++)
+        mh_log(MH_LOG_WARNING, "%s: the script %s does not exist (or does not compile).",
+               s->scene.entity_names[s->scene.scripts[i].entity], s->scene.scripts[i].class_name);
+}
+static void mh_scripts_unload(mh_loaded_scene *s) { (void)s; }
+static void mh_scripts_run(mh_world *w, const mh_input *input, int callback) { (void)w; (void)input; (void)callback; }
+#endif
 
 static void mh_world_unload_all(mh_world *w)
 {
     for (int i = 0; i < w->count; i++) {
         mh_loaded_scene *s = &w->scenes[i];
+        mh_scripts_unload(s);
         mh_free_scene(&s->scene);
         free(s->world);
         free(s->fly_yaw);
@@ -60,7 +117,9 @@ static void mh_world_load(mh_world *w, int index, int mode)
         }
     }
     mh_loaded_scene *s = &w->scenes[w->count++];
+    memset(s, 0, sizeof(*s));
     s->index = index;
+    s->serial = w->next_serial++;
     mh_load_scene(w->data, index, &s->scene);
     s->world = mh_alloc(sizeof(mat4) * (size_t)maxi(1, s->scene.entity_count));
     s->fly_yaw = mh_alloc(sizeof(float) * (size_t)maxi(1, s->scene.fly_camera_count));
@@ -71,6 +130,7 @@ static void mh_world_load(mh_world *w, int index, int mode)
     }
     mh_world_matrices(&s->scene, s->world);
     w->changed = 1;
+    mh_scripts_load(w, s); /* creates the scripts, then runs their Awake */
 }
 
 static void mh_world_init(mh_world *w, mh_data *data, const mh_game *game, int first_scene)
@@ -79,6 +139,7 @@ static void mh_world_init(mh_world *w, mh_data *data, const mh_game *game, int f
     w->data = data;
     w->game = game;
     w->request_scene = -1;
+    w->next_serial = 1;
     mh_world_load(w, first_scene, MH_LOAD_SINGLE);
 }
 
@@ -110,6 +171,12 @@ static void mh_world_update(mh_world *w, const mh_input *input, float dt)
 {
     int looking = 0;
     w->changed = 0;
+    w->delta_time = dt;
+    w->time += dt;
+    w->frame_count++;
+    mh_scripts_run(w, input, MH_START);
+    mh_scripts_run(w, input, MH_UPDATE);
+
     for (int si = 0; si < w->count; si++) {
         mh_loaded_scene *s = &w->scenes[si];
         for (int i = 0; i < s->scene.fly_camera_count; i++)
@@ -123,6 +190,7 @@ static void mh_world_update(mh_world *w, const mh_input *input, float dt)
         }
     }
     w->cursor_captured = looking;
+    mh_scripts_run(w, input, MH_LATE_UPDATE);
 
     if (w->request_scene >= 0) {
         mh_world_load(w, w->request_scene, w->request_mode);

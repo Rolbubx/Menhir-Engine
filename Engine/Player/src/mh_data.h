@@ -53,6 +53,7 @@ typedef struct {
     int width, height;
     char *title;
     int scene_count;
+    char **scene_names; /* by build index */
     mh_rendering rendering;
     int axis_count;
     mh_input_axis *axes;
@@ -156,6 +157,26 @@ typedef struct {
     int scene, mode;
 } mh_scene_switcher;
 
+/* A field value a scene gives a script, as the editor saved it (JSON); the player converts it to
+   the field's type (mh_scripts.c). */
+enum { MH_VALUE_NUMBER, MH_VALUE_BOOL, MH_VALUE_STRING, MH_VALUE_NUMBERS };
+
+typedef struct {
+    char *name;
+    int kind;     /* MH_VALUE_* */
+    char *text;   /* NUMBER: the number as written; STRING: the text */
+    int boolean;  /* BOOL */
+    int count;    /* NUMBERS: how many */
+    char **items; /* NUMBERS: each number as written */
+} mh_script_value;
+
+typedef struct {
+    int entity;
+    char *class_name; /* like .NET's Type.FullName */
+    int value_count;
+    mh_script_value *values;
+} mh_script_data;
+
 typedef struct {
     char *name;
     int sun_disk;
@@ -177,6 +198,9 @@ typedef struct {
     mh_fly_camera *fly_cameras;
     int switcher_count;
     mh_scene_switcher *switchers;
+    char **entity_names; /* per entity */
+    int script_count;
+    mh_script_data *scripts; /* in entity order, then component order */
 } mh_scene;
 
 typedef struct {

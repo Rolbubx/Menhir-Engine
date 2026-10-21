@@ -10,6 +10,10 @@ public sealed class InputFrame
     public float MouseDeltaX { get; set; }
     public float MouseDeltaY { get; set; }
 
+    /// <summary>The cursor in pixels from the window's (or Game view's) bottom-left corner.</summary>
+    public float MouseX { get; set; }
+    public float MouseY { get; set; }
+
     /// <summary>Scroll wheel movement since the previous frame (positive: away from the user).</summary>
     public float Scroll { get; set; }
 
@@ -63,6 +67,8 @@ public sealed class InputState
         (_previous, _down) = (_down, _previous);
         _down.Clear();
         _down.UnionWith(frame.Down);
+        MouseX = frame.MouseX;
+        MouseY = frame.MouseY;
 
         for (int i = 0; i < _entries.Count; i++)
         {
@@ -122,6 +128,14 @@ public sealed class InputState
     public bool GetButtonUp(string name) => !AnyPositive(name, _down) && AnyPositive(name, _previous);
 
     public bool GetKey(int code) => IsDown(code);
+
+    public bool GetKeyDown(int code) => IsDown(code) && !_previous.Contains(code);
+
+    public bool GetKeyUp(int code) => code != InputCodes.None && !_down.Contains(code) && _previous.Contains(code);
+
+    /// <summary>The cursor position of the last frame (see <see cref="InputFrame.MouseX"/>).</summary>
+    public float MouseX { get; private set; }
+    public float MouseY { get; private set; }
 
     private bool IsDown(int code) => code != InputCodes.None && _down.Contains(code);
 

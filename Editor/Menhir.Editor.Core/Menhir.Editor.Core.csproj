@@ -8,4 +8,9 @@
     <RootNamespace>Menhir.Editor</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- The scripting API: the editor hosts scripts in Play mode. -->
+    <ProjectReference Include="..\..\Engine\Scripting\Menhir.Engine\Menhir.Engine.csproj" />
+  </ItemGroup>
+
 </Project>

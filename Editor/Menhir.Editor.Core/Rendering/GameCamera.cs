@@ -12,12 +12,16 @@ public readonly record struct GameView(Matrix4x4 View, Matrix4x4 Projection, Vec
 public static class GameCamera
 {
     /// <summary>The scene's first <see cref="Camera"/>, or one at (0, 1, 10) looking down -Z.</summary>
-    public static GameView Compute(Scene scene, float aspect)
+    public static GameView Compute(Scene scene, float aspect) => Compute([scene], aspect);
+
+    /// <summary>The first camera of the loaded scenes, in load order.</summary>
+    public static GameView Compute(IReadOnlyList<Scene> scenes, float aspect)
     {
         Matrix4x4 world = Matrix4x4.CreateTranslation(0, 1, 10);
         var camera = new Camera();
         Vector3 background = Vector3.Zero;
-        if (scene.Entities.FirstOrDefault(e => e.GetComponent<Camera>() != null) is { } entity)
+        Scene? scene = scenes.FirstOrDefault(s => s.Entities.Any(e => e.GetComponent<Camera>() != null));
+        if (scene?.Entities.First(e => e.GetComponent<Camera>() != null) is { } entity)
         {
             world = scene.GetWorldMatrix(entity);
             camera = entity.GetComponent<Camera>()!;

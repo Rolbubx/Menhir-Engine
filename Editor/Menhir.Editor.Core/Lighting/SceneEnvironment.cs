@@ -68,9 +68,16 @@ public sealed class SceneEnvironment
 
     public required PostProcessStack PostProcessing { get; init; }
 
-    public static SceneEnvironment Gather(Scene scene)
+    public static SceneEnvironment Gather(Scene scene) => Gather([scene]);
+
+    /// <summary>
+    /// Several loaded scenes (Play mode, the game): the sky and post-processing come from the first
+    /// (active) one; lights from all, the sun being the first directional light in load order.
+    /// </summary>
+    public static SceneEnvironment Gather(IReadOnlyList<Scene> scenes)
     {
-        ProceduralSkybox sky = Find<ProceduralSkybox>(scene) ?? new ProceduralSkybox();
+        Scene active = scenes[0];
+        ProceduralSkybox sky = Find<ProceduralSkybox>(active) ?? new ProceduralSkybox();
 
         Vector3 toSun = SkyModel.DefaultToSun;
         Vector3 sunColor = Vector3.Zero;
@@ -79,6 +86,7 @@ public sealed class SceneEnvironment
         var additional = new List<PunctualLight>();
         bool hasSun = false;
 
+        foreach (Scene scene in scenes)
         foreach (Entity entity in scene.Entities)
         {
             if (entity.GetComponent<Light>() is not { } light)
@@ -119,7 +127,7 @@ public sealed class SceneEnvironment
             AmbientHorizon = horizon,
             AmbientBottom = bottom,
             AdditionalLights = additional,
-            PostProcessing = GatherPostProcessing(scene),
+            PostProcessing = GatherPostProcessing(active),
         };
     }
 

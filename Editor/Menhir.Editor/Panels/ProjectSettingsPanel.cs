@@ -1,5 +1,6 @@
 using System.Numerics;
 using ImGuiNET;
+using Menhir.Editor.Input;
 using Menhir.Editor.Inspector;
 using Menhir.Editor.Projects;
 using Menhir.Editor.UI;
@@ -62,6 +63,18 @@ public sealed class ProjectSettingsPanel : EditorPanel
             ImGui.EndPopup();
         }
 
+        if (ComponentHeader.Draw("input", Icons.Input, EditorTheme.Text, "Input", menuId: "##inputMenu"))
+            DrawInputSettings(project);
+        if (ImGui.BeginPopup("##inputMenu"))
+        {
+            if (ImGui.MenuItem("Reset to Defaults"))
+            {
+                settings.Input = new InputSettings();
+                _dirty = true;
+            }
+            ImGui.EndPopup();
+        }
+
         if (ComponentHeader.Draw("build", Icons.Settings, EditorTheme.Text, "Build", menuId: "##buildMenu"))
             DrawBuildSettings(project);
         if (ImGui.BeginPopup("##buildMenu"))
@@ -88,6 +101,57 @@ public sealed class ProjectSettingsPanel : EditorPanel
                 _dirty = false;
             }
         }
+    }
+
+    /// <summary>The Input Manager: one collapsible entry per axis or button, like Unity's.</summary>
+    private void DrawInputSettings(Project project)
+    {
+        List<InputAxis> axes = project.Settings.Input.Axes;
+        ImGui.TextDisabled("Read by name in the game (Fly Camera, Scene Switcher, and scripts later).");
+        for (int i = 0; i < axes.Count; i++)
+        {
+            InputAxis axis = axes[i];
+            ImGui.PushID(i);
+            var warnings = new List<string>();
+            _ = new InputState([axis], warnings);
+            string label = warnings.Count > 0 ? $"{Icons.Warning}  {axis.Name}" : axis.Name;
+            bool open = ImGui.TreeNodeEx($"{label}###axis", ImGuiTreeNodeFlags.SpanAvailWidth);
+            if (ImGui.BeginPopupContextItem("##axisMenu"))
+            {
+                if (ImGui.MenuItem("Duplicate"))
+                {
+                    axes.Insert(i + 1, axis.Clone());
+                    _dirty = true;
+                }
+                if (ImGui.MenuItem("Remove"))
+                {
+                    axes.RemoveAt(i);
+                    _dirty = true;
+                }
+                ImGui.EndPopup();
+            }
+            if (open)
+            {
+                foreach (string warning in warnings)
+                    ImGui.TextColored(EditorTheme.Warning, warning);
+                ComponentDrawer.Draw(axis, (property, value) =>
+                {
+                    property.SetValue(axis, value);
+                    _dirty = true;
+                }, project.Assets);
+                ImGui.TreePop();
+            }
+            ImGui.PopID();
+            if (i >= axes.Count || axes[i] != axis)
+                break; // removed or duplicated: the list changed under the loop
+        }
+        if (ImGui.Button($"{Icons.Plus}  Add Axis"))
+        {
+            axes.Add(new InputAxis());
+            _dirty = true;
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled("Right-click an entry to duplicate or remove it.");
     }
 
     /// <summary>The window size and compiler, then the scenes in the build (all of them when none is ticked).</summary>

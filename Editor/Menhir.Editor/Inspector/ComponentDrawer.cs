@@ -27,6 +27,10 @@ public static class ComponentDrawer
             return Icons.Light;
         if (type == typeof(Camera))
             return Icons.Camera;
+        if (type == typeof(FlyCamera))
+            return Icons.FlyCamera;
+        if (type == typeof(SceneSwitcher))
+            return Icons.SceneSwitcher;
         if (type == typeof(ProceduralSkybox))
             return Icons.Sky;
         if (type.IsSubclassOf(typeof(PostProcessEffect)))

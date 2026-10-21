@@ -31,6 +31,7 @@ A type and id pair is unique. Unknown chunk types are ignored by readers.
 | `u32` cascade count, `f32` × 4 cascade ends | Fractions of the max distance (`RenderingSettings.CascadeEnds`, padded with 1) |
 | `f32` last border, `f32` depth bias, `f32` normal bias | |
 | `u32` soft filter taps | 2, 3 or 4; 0 when the project turns soft shadows off |
+| `u32` axis count, then per axis | The Input Manager ([Input.md](Input.md)): `string` name, `u32` type (0 keys, 1 mouse, 2 joystick), `i32` negative, positive, alt negative, alt positive button codes (−1: none; GLFW key codes, 1000 + mouse button, 2000 + gamepad button), `f32` gravity, dead, sensitivity, `bool` snap, `bool` invert, `u32` axis |
 
 ## `SCNE` (id = scene index)
 
@@ -62,6 +63,10 @@ A type and id pair is unique. Unknown chunk types are ignored by readers.
      `u32` count, then `string` uniform name, `u32` kind (0 int, 1 float, 2 vec2, 3 vec3, 4 vec4),
      `vec4` value (an int is stored as a float in x).
    - Color curves: `bool` on, then if on `f32` × 128 × 8 (the curve texture's rows).
+9. Fly cameras: `u32` count, then `u32` entity, `f32` move speed, `f32` look speed, `f32` fast multiplier,
+   `f32` yaw and `f32` pitch (degrees, from the entity's rotation), `string` horizontal axis, vertical axis,
+   look X axis, look Y axis, fast button, `bool` require right mouse button.
+10. Scene switchers: `u32` count, then `u32` entity, `string` button, `u32` scene index, `u32` mode (0 single, 1 additive).
 
 The game computes the rest each frame, like the editor: world matrices, the sun and the lights,
 the camera, shadow cascades and slices, and what depends on the window's size.

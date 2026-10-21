@@ -37,7 +37,7 @@ public static class GameBuild
 
         log($"Exporting {scenes.Count} scene(s) to {DataFileName}");
         byte[] data = GameDataExporter.Export(project.Name, scenes, project.Settings.Rendering, project.Settings.Build,
-            guid => LoadTexture(project, guid), guid => LoadModel(project, guid), warnings);
+            guid => LoadTexture(project, guid), guid => LoadModel(project, guid), warnings, project.Settings.Input);
         File.WriteAllBytes(Path.Combine(directory, DataFileName), data);
 
         log("Writing main.c");

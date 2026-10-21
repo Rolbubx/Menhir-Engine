@@ -135,6 +135,9 @@ The viewport renders like URP: scenes are lit and drawn in HDR, then post-proces
   Depth Of Field (Gaussian and Bokeh), Film Grain, Lens Distortion, Lift Gamma Gain, Motion Blur
   (camera), Panini Projection, Shadows Midtones Highlights, Split Toning, Tonemapping (Neutral, ACES),
   Vignette, White Balance. Settings and defaults follow URP.
+- **Input**: an Input Manager like Unity's in **Edit → Project Settings → Input** (keys, mouse, gamepad), and
+  two built-in **Gameplay** components that use it in the built game: **Fly Camera** and **Scene Switcher**
+  (loads another scene of the build, alone or additively). See [Docs/Input.md](Docs/Input.md).
 - **Camera** component: where the built game renders from (field of view, clip planes, skybox or solid
   color background). The viewport keeps its own camera.
 - New scenes start like a URP scene: a Main Camera, a Directional Light with soft shadows, an Environment (the sky) and a Global Volume

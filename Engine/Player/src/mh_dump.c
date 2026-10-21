@@ -1,6 +1,7 @@
 /* --dump: the first frame's camera, world matrices, lights and shadow maps as text, one value
    per line group. The editor's tests compare it with what the editor computes. */
 #include <stdlib.h>
+#include <string.h>
 #include "mh_data.h"
 
 static void mh_dump_floats(const char *key, int index, const float *v, int n)
@@ -30,20 +31,18 @@ static void mh_dump_slice(const char *key, int index, const mh_shadow_slice *s)
     mh_dump_floats(key, index, v, 41);
 }
 
-static void mh_dump(const mh_game *game, const mh_scene *scene, int width, int height)
+/* The active scene's world matrices, the view, lights and shadow maps of the loaded scenes. */
+static void mh_dump(const mh_game *game, const mh_world *w, int width, int height)
 {
-    mat4 *world = malloc(sizeof(mat4) * (size_t)maxi(1, scene->entity_count));
-    if (!world)
-        exit(1);
-    mh_world_matrices(scene, world);
+    const mh_scene *scene = &w->scenes[0].scene;
     mh_environment env;
-    mh_gather_environment(scene, world, &env);
+    mh_world_environment(w, &env);
     mh_view view;
-    mh_camera_view(scene, world, (float)width / (float)height, &view);
+    mh_world_view(w, (float)width / (float)height, &view);
 
     printf("scene 0 %s\n", scene->name);
     for (int i = 0; i < scene->entity_count; i++)
-        mh_dump_floats("world", i, world[i].m, 16);
+        mh_dump_floats("world", i, w->scenes[0].world[i].m, 16);
     mh_dump_floats("view", 0, view.view.m, 16);
     mh_dump_floats("projection", 0, view.projection.m, 16);
     float sun[7] = { env.to_sun.x, env.to_sun.y, env.to_sun.z, env.sun_color.x, env.sun_color.y, env.sun_color.z,
@@ -57,9 +56,13 @@ static void mh_dump(const mh_game *game, const mh_scene *scene, int width, int h
     }
 
     mh_bounds casters = { 0, { 0, 0, 0 }, { 0, 0, 0 } };
-    for (int i = 0; i < scene->renderer_count; i++)
-        if (scene->renderers[i].cast_shadows)
-            casters = mh_bounds_encapsulate(casters, mh_renderer_bounds(&scene->renderers[i], world[scene->renderers[i].entity]));
+    for (int si = 0; si < w->count; si++) {
+        const mh_scene *s = &w->scenes[si].scene;
+        for (int i = 0; i < s->renderer_count; i++)
+            if (s->renderers[i].cast_shadows)
+                casters = mh_bounds_encapsulate(casters,
+                                                mh_renderer_bounds(&s->renderers[i], w->scenes[si].world[s->renderers[i].entity]));
+    }
 
     mh_main_shadows main_shadows;
     mh_main_light_shadows(&env, &view, &game->rendering, casters, &main_shadows);
@@ -85,5 +88,77 @@ static void mh_dump(const mh_game *game, const mh_scene *scene, int width, int h
         for (int i = 0; i < additional.slice_count; i++)
             mh_dump_slice("slice", i, &additional.slices[i]);
     }
-    free(world);
+}
+
+/* --simulate: plays a script of input events without a window, frame by frame, and prints the
+   state at each "dump" line. Lines: "down <code>", "up <code>", "mouse <dx> <dy>", "scroll <steps>",
+   "pad <axis> <value>", "frame <dt> [count]", "dump"; '#' starts a comment. */
+static void mh_simulate(const mh_game *game, mh_world *w, const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        fprintf(stderr, "menhir: cannot open %s\n", path);
+        exit(1);
+    }
+    mh_input input;
+    mh_input_init(&input, game);
+    mh_input_frame frame;
+    memset(&frame, 0, sizeof frame);
+    char line[256];
+    while (fgets(line, sizeof line, f)) {
+        char *hash = strchr(line, '#');
+        if (hash)
+            *hash = 0;
+        char command[32];
+        if (sscanf(line, "%31s", command) != 1)
+            continue;
+        int code, axis, count = 1;
+        float a, b;
+        if (!strcmp(command, "down") && sscanf(line, "%*s %d", &code) == 1)
+            mh_frame_set(&frame, code, 1);
+        else if (!strcmp(command, "up") && sscanf(line, "%*s %d", &code) == 1)
+            mh_frame_set(&frame, code, 0);
+        else if (!strcmp(command, "mouse") && sscanf(line, "%*s %f %f", &a, &b) == 2) {
+            frame.mouse_dx = a;
+            frame.mouse_dy = b;
+        } else if (!strcmp(command, "scroll") && sscanf(line, "%*s %f", &a) == 1)
+            frame.scroll = a;
+        else if (!strcmp(command, "pad") && sscanf(line, "%*s %d %f", &axis, &a) == 2 && axis >= 0 && axis < 6)
+            frame.pad_axes[axis] = a;
+        else if (!strcmp(command, "frame") && sscanf(line, "%*s %f %d", &a, &count) >= 1) {
+            for (int i = 0; i < count; i++) {
+                mh_input_update(&input, &frame, a);
+                mh_world_update(w, &input, a);
+                frame.mouse_dx = frame.mouse_dy = frame.scroll = 0.0f; /* movement is per frame */
+            }
+        } else if (!strcmp(command, "dump")) {
+            for (int i = 0; i < game->axis_count; i++) {
+                const char *name = game->axes[i].name;
+                int first = 1;
+                for (int j = 0; j < i; j++)
+                    first &= strcmp(game->axes[j].name, name) != 0;
+                if (first)
+                    printf("axis %s|%.9g %.9g %d %d %d\n", name, mh_get_axis(&input, name), mh_get_axis_raw(&input, name),
+                           mh_get_button(&input, name), mh_get_button_down(&input, name), mh_get_button_up(&input, name));
+            }
+            printf("scenes");
+            for (int i = 0; i < w->count; i++)
+                printf(" %d", w->scenes[i].index);
+            printf("\ncursor %d\n", w->cursor_captured);
+            for (int si = 0; si < w->count; si++) {
+                const mh_scene *s = &w->scenes[si].scene;
+                for (int i = 0; i < s->fly_camera_count; i++) {
+                    const mh_entity *e = &s->entities[s->fly_cameras[i].entity];
+                    float v[9] = { w->scenes[si].fly_yaw[i], w->scenes[si].fly_pitch[i], e->position.x, e->position.y,
+                                   e->position.z, e->rotation.x, e->rotation.y, e->rotation.z, e->rotation.w };
+                    mh_dump_floats("fly", si * 100 + i, v, 9);
+                }
+            }
+            printf("end\n");
+        } else {
+            fprintf(stderr, "menhir: %s: bad line: %s", path, line);
+            exit(2);
+        }
+    }
+    fclose(f);
 }

@@ -56,23 +56,26 @@ static vec3 mh_forward(mat4 world)
 
 static vec3 mh_default_to_sun(void) { return v3_normalize(v3(-0.32f, 0.77f, 0.55f)); }
 
-static void mh_gather_environment(const mh_scene *scene, const mat4 *world, mh_environment *env)
+static void mh_environment_begin(mh_environment *env)
 {
     env->to_sun = mh_default_to_sun();
     env->sun_color = v3(0, 0, 0);
     env->sun_shadows = MH_SHADOWS_NONE;
     env->sun_shadow_strength = 1.0f;
     env->light_count = 0;
-    int has_sun = 0;
+}
 
+/* Adds a scene's lights; *has_sun is set once a directional light became the sun. */
+static void mh_gather_lights(const mh_scene *scene, const mat4 *world, mh_environment *env, int *has_sun)
+{
     for (int i = 0; i < scene->light_count; i++) {
         const mh_light *light = &scene->lights[i];
         mat4 m = world[light->entity];
         vec3 forward = mh_forward(m);
         if (light->type == MH_LIGHT_DIRECTIONAL) {
-            if (has_sun)
+            if (*has_sun)
                 continue; /* one main directional light, like URP */
-            has_sun = 1;
+            *has_sun = 1;
             env->to_sun = v3_neg(forward);
             env->sun_color = light->color;
             env->sun_shadows = light->shadows;
@@ -93,16 +96,15 @@ static void mh_gather_environment(const mh_scene *scene, const mat4 *world, mh_e
     }
 }
 
-/* The scene's first camera, or one at (0, 1, 10) looking down -Z. */
-static void mh_camera_view(const mh_scene *scene, const mat4 *world, float aspect, mh_view *view)
+/* The view of camera c placed by matrix m, or with c NULL, of one at (0, 1, 10) looking down -Z. */
+static void mh_camera_view(const mh_camera *c, mat4 m, float aspect, mh_view *view)
 {
-    mat4 m = m4_translation(v3(0, 1, 10));
     float fov = 60.0f, near = 0.3f, far = 1000.0f;
     view->clear_flags = MH_CLEAR_SKYBOX;
     view->background = v3(0, 0, 0);
-    if (scene->camera_count > 0) {
-        const mh_camera *c = &scene->cameras[0];
-        m = world[c->entity];
+    if (!c)
+        m = m4_translation(v3(0, 1, 10));
+    else {
         fov = clampf(c->fov_degrees, 1.0f, 179.0f);
         near = fmaxf(c->near, 0.01f);
         far = fmaxf(c->far, near + 0.01f);

@@ -291,29 +291,61 @@ static void mh_draw_skybox(mh_renderer *r, const mh_scene *scene, const mh_envir
     glDepthMask(GL_TRUE);
 }
 
-/* One frame of the scene into the renderer's output texture, like SceneRenderer.Render. */
-static void mh_render_frame(mh_renderer *r, const mh_game *game, const mh_scene *scene, const mh_view *view)
+/* Deletes the meshes and textures the loaded scenes no longer use (after a scene change). */
+static void mh_renderer_release_unused(mh_renderer *r, const mh_world *w)
 {
-    mat4 *world = malloc(sizeof(mat4) * (size_t)maxi(1, scene->entity_count));
-    mh_draw *draws = malloc(sizeof(mh_draw) * (size_t)maxi(1, scene->renderer_count));
-    mh_world_matrices(scene, world);
+    int kept = 0;
+    for (int i = 0; i < r->mesh_count; i++) {
+        mh_gpu_mesh m = r->meshes[i];
+        if (mh_world_uses_mesh(w, m.id)) {
+            r->meshes[kept++] = m;
+            continue;
+        }
+        glDeleteVertexArrays(1, &m.vao);
+        glDeleteBuffers(1, &m.vbo);
+        glDeleteBuffers(1, &m.ebo);
+    }
+    r->mesh_count = kept;
+
+    kept = 0;
+    for (int i = 0; i < r->texture_count; i++) {
+        mh_gpu_texture t = r->textures[i];
+        if (mh_world_uses_texture(w, t.id))
+            r->textures[kept++] = t;
+        else
+            glDeleteTextures(1, &t.texture);
+    }
+    r->texture_count = kept;
+}
+
+/* One frame of the loaded scenes into the renderer's output texture, like SceneRenderer.Render. */
+static void mh_render_frame(mh_renderer *r, const mh_game *game, const mh_world *w, const mh_view *view)
+{
+    const mh_scene *scene = &w->scenes[0].scene; /* the active scene: sky, ambient light, effects */
+    int renderer_total = 0;
+    for (int si = 0; si < w->count; si++)
+        renderer_total += w->scenes[si].scene.renderer_count;
+    mh_draw *draws = malloc(sizeof(mh_draw) * (size_t)maxi(1, renderer_total));
     mh_environment env;
-    mh_gather_environment(scene, world, &env);
+    mh_world_environment(w, &env);
 
     int draw_count = 0;
     mh_bounds casters = { 0, { 0, 0, 0 }, { 0, 0, 0 } };
-    for (int i = 0; i < scene->renderer_count; i++) {
-        const mh_mesh_renderer *renderer = &scene->renderers[i];
-        const mh_gpu_mesh *mesh = mh_renderer_mesh(r, renderer->mesh);
-        if (!mesh)
-            continue;
-        mh_draw *d = &draws[draw_count++];
-        d->mesh = mesh;
-        d->model = world[renderer->entity];
-        d->normal_matrix = m4_normal_matrix(d->model);
-        d->renderer = renderer;
-        if (renderer->cast_shadows)
-            casters = mh_bounds_encapsulate(casters, mh_renderer_bounds(renderer, d->model));
+    for (int si = 0; si < w->count; si++) {
+        const mh_scene *s = &w->scenes[si].scene;
+        for (int i = 0; i < s->renderer_count; i++) {
+            const mh_mesh_renderer *renderer = &s->renderers[i];
+            const mh_gpu_mesh *mesh = mh_renderer_mesh(r, renderer->mesh);
+            if (!mesh)
+                continue;
+            mh_draw *d = &draws[draw_count++];
+            d->mesh = mesh;
+            d->model = w->scenes[si].world[renderer->entity];
+            d->normal_matrix = m4_normal_matrix(d->model);
+            d->renderer = renderer;
+            if (renderer->cast_shadows)
+                casters = mh_bounds_encapsulate(casters, mh_renderer_bounds(renderer, d->model));
+        }
     }
 
     mh_main_shadows main_shadows;
@@ -371,6 +403,5 @@ static void mh_render_frame(mh_renderer *r, const mh_game *game, const mh_scene 
     glActiveTexture(GL_TEXTURE0);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
-    free(world);
     free(draws);
 }

@@ -159,6 +159,24 @@ static void mh_load_game(mh_data *data, mh_game *game)
     s->depth_bias = mh_f32(&r);
     s->normal_bias = mh_f32(&r);
     s->soft_taps = (int)mh_u32(&r);
+
+    game->axis_count = mh_count(&r, 44);
+    game->axes = mh_alloc(sizeof(mh_input_axis) * (size_t)game->axis_count);
+    for (int i = 0; i < game->axis_count; i++) {
+        mh_input_axis *a = &game->axes[i];
+        a->name = mh_string(&r);
+        a->type = (int)mh_u32(&r);
+        a->negative = mh_i32(&r);
+        a->positive = mh_i32(&r);
+        a->alt_negative = mh_i32(&r);
+        a->alt_positive = mh_i32(&r);
+        a->gravity = mh_f32(&r);
+        a->dead = mh_f32(&r);
+        a->sensitivity = mh_f32(&r);
+        a->snap = (int)mh_u32(&r);
+        a->invert = (int)mh_u32(&r);
+        a->axis = clampi((int)mh_u32(&r), 0, 5);
+    }
     free(bytes);
 }
 
@@ -298,9 +316,37 @@ static void mh_load_scene(mh_data *data, int index, mh_scene *scene)
         c->clear_flags = (int)mh_u32(&r);
         c->background = mh_vec3(&r);
     }
-#undef MH_ENTITY_INDEX
 
     mh_read_post(&r, &scene->post);
+
+    scene->fly_camera_count = mh_count(&r, 48);
+    scene->fly_cameras = mh_alloc(sizeof(mh_fly_camera) * (size_t)scene->fly_camera_count);
+    for (int i = 0; i < scene->fly_camera_count; i++) {
+        mh_fly_camera *f = &scene->fly_cameras[i];
+        MH_ENTITY_INDEX(f->entity);
+        f->move_speed = mh_f32(&r);
+        f->look_speed = mh_f32(&r);
+        f->fast_multiplier = mh_f32(&r);
+        f->yaw = mh_f32(&r);
+        f->pitch = mh_f32(&r);
+        f->horizontal_axis = mh_string(&r);
+        f->vertical_axis = mh_string(&r);
+        f->look_x_axis = mh_string(&r);
+        f->look_y_axis = mh_string(&r);
+        f->fast_button = mh_string(&r);
+        f->require_right_mouse_button = (int)mh_u32(&r);
+    }
+
+    scene->switcher_count = mh_count(&r, 16);
+    scene->switchers = mh_alloc(sizeof(mh_scene_switcher) * (size_t)scene->switcher_count);
+    for (int i = 0; i < scene->switcher_count; i++) {
+        mh_scene_switcher *w = &scene->switchers[i];
+        MH_ENTITY_INDEX(w->entity);
+        w->button = mh_string(&r);
+        w->scene = (int)mh_u32(&r);
+        w->mode = (int)mh_u32(&r);
+    }
+#undef MH_ENTITY_INDEX
     free(bytes);
 }
 
@@ -314,6 +360,18 @@ static void mh_free_scene(mh_scene *scene)
     for (int i = 0; i < scene->post.uniform_count; i++)
         free(scene->post.uniforms[i].name);
     free(scene->post.uniforms);
+    for (int i = 0; i < scene->fly_camera_count; i++) {
+        mh_fly_camera *f = &scene->fly_cameras[i];
+        free(f->horizontal_axis);
+        free(f->vertical_axis);
+        free(f->look_x_axis);
+        free(f->look_y_axis);
+        free(f->fast_button);
+    }
+    free(scene->fly_cameras);
+    for (int i = 0; i < scene->switcher_count; i++)
+        free(scene->switchers[i].button);
+    free(scene->switchers);
     memset(scene, 0, sizeof(*scene));
 }
 

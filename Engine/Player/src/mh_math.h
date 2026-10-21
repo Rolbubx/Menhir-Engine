@@ -85,6 +85,17 @@ static inline mat4 m4_translation(vec3 t)
     return r;
 }
 
+/* Quaternion.CreateFromYawPitchRoll (radians): roll around Z, then pitch around X, then yaw around Y. */
+static inline quat q_from_yaw_pitch_roll(float yaw, float pitch, float roll)
+{
+    float sr = sinf(roll * 0.5f), cr = cosf(roll * 0.5f);
+    float sp = sinf(pitch * 0.5f), cp = cosf(pitch * 0.5f);
+    float sy = sinf(yaw * 0.5f), cy = cosf(yaw * 0.5f);
+    quat q = { cy * sp * cr + sy * cp * sr, sy * cp * cr - cy * sp * sr, cy * cp * sr - sy * sp * cr,
+               cy * cp * cr + sy * sp * sr };
+    return q;
+}
+
 /* Matrix4x4.CreateFromQuaternion. */
 static inline mat4 m4_from_quat(quat q)
 {

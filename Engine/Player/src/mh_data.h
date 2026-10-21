@@ -38,11 +38,24 @@ typedef struct {
     int soft_taps; /* filter taps of soft shadows, 0 when the project turns them off */
 } mh_rendering;
 
+/* An Input Manager entry (the editor's InputAxis); buttons are codes (see mh_input.c), -1 for none. */
+enum { MH_AXIS_KEYS, MH_AXIS_MOUSE, MH_AXIS_JOYSTICK };
+
+typedef struct {
+    char *name;
+    int type;
+    int negative, positive, alt_negative, alt_positive;
+    float gravity, dead, sensitivity;
+    int snap, invert, axis;
+} mh_input_axis;
+
 typedef struct {
     int width, height;
     char *title;
     int scene_count;
     mh_rendering rendering;
+    int axis_count;
+    mh_input_axis *axes;
 } mh_game;
 
 typedef struct {
@@ -128,6 +141,22 @@ typedef struct {
 } mh_post;
 
 typedef struct {
+    int entity;
+    float move_speed, look_speed, fast_multiplier;
+    float yaw, pitch; /* degrees, from the entity's rotation */
+    char *horizontal_axis, *vertical_axis, *look_x_axis, *look_y_axis, *fast_button;
+    int require_right_mouse_button;
+} mh_fly_camera;
+
+enum { MH_LOAD_SINGLE, MH_LOAD_ADDITIVE };
+
+typedef struct {
+    int entity;
+    char *button;
+    int scene, mode;
+} mh_scene_switcher;
+
+typedef struct {
     char *name;
     int sun_disk;
     float sun_size, sun_size_convergence, atmosphere_thickness;
@@ -144,6 +173,10 @@ typedef struct {
     int camera_count;
     mh_camera *cameras;
     mh_post post;
+    int fly_camera_count;
+    mh_fly_camera *fly_cameras;
+    int switcher_count;
+    mh_scene_switcher *switchers;
 } mh_scene;
 
 typedef struct {

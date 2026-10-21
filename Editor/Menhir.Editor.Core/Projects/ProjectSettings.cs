@@ -18,4 +18,6 @@ public sealed class ProjectSettings
     public RenderingSettings Rendering { get; set; } = new();
 
     public BuildSettings Build { get; set; } = new();
+
+    public Input.InputSettings Input { get; set; } = new();
 }

@@ -9,10 +9,12 @@
      --frames <n>         quit after n frames
      --screenshot <file>  save the last frame as a binary PPM image when the game quits
      --dump               print the first frame's matrices, lights and shadows, without a window
-                          (the only option of a MENHIR_HEADLESS build, used by the editor's tests) */
+     --simulate <file>    play a script of input events without a window (see mh_dump.c)
+   --dump and --simulate are the only options of a MENHIR_HEADLESS build, used by the editor's tests. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #ifndef MENHIR_HEADLESS
 #define GLAD_GL_IMPLEMENTATION
@@ -26,6 +28,8 @@
 #include "mh_data.c"
 #include "mh_scene.c"
 #include "mh_shadows.c"
+#include "mh_input.c"
+#include "mh_world.c"
 #include "mh_dump.c"
 
 #ifndef MENHIR_HEADLESS
@@ -35,19 +39,20 @@
 #endif
 
 typedef struct {
-    const char *data, *screenshot;
+    const char *data, *screenshot, *simulate;
     int scene, width, height, frames, dump;
 } mh_options;
 
 static void mh_usage(void)
 {
-    fprintf(stderr, "usage: game [--data file] [--scene n] [--size WxH] [--frames n] [--screenshot file.ppm] [--dump]\n");
+    fprintf(stderr, "usage: game [--data file] [--scene n] [--size WxH] [--frames n] [--screenshot file.ppm] [--dump] "
+                    "[--simulate file]\n");
     exit(2);
 }
 
 static mh_options mh_parse(int argc, char **argv)
 {
-    mh_options o = { NULL, NULL, 0, 0, 0, 0, 0 };
+    mh_options o = { NULL, NULL, NULL, 0, 0, 0, 0, 0 };
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         int more = i + 1 < argc;
@@ -64,6 +69,8 @@ static mh_options mh_parse(int argc, char **argv)
             o.screenshot = argv[++i];
         else if (!strcmp(a, "--dump"))
             o.dump = 1;
+        else if (!strcmp(a, "--simulate") && more)
+            o.simulate = argv[++i];
         else
             mh_usage();
     }
@@ -110,12 +117,47 @@ static void mh_save_ppm(const char *path, int width, int height, GLuint framebuf
     free(pixels);
 }
 
-static void mh_on_key(GLFWwindow *window, int key, int scancode, int action, int mods)
+static float mh_scroll_steps;
+
+static void mh_on_scroll(GLFWwindow *window, double x, double y)
 {
-    (void)scancode;
-    (void)mods;
-    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
+    (void)window;
+    (void)x;
+    mh_scroll_steps += (float)y;
+}
+
+/* Reads the devices into this frame's input: keys, mouse, and the first gamepad GLFW knows. */
+static void mh_read_devices(GLFWwindow *window, mh_input_frame *frame, double *last_x, double *last_y, int *has_last)
+{
+    for (int key = GLFW_KEY_SPACE; key <= GLFW_KEY_LAST; key++)
+        frame->keys[key] = glfwGetKey(window, key) == GLFW_PRESS;
+    for (int b = 0; b < MH_MOUSE_BUTTONS; b++)
+        frame->mouse[b] = glfwGetMouseButton(window, b) == GLFW_PRESS;
+
+    double x, y;
+    glfwGetCursorPos(window, &x, &y);
+    frame->mouse_dx = *has_last ? (float)(x - *last_x) : 0.0f;
+    frame->mouse_dy = *has_last ? (float)(y - *last_y) : 0.0f;
+    *last_x = x;
+    *last_y = y;
+    *has_last = 1;
+    frame->scroll = mh_scroll_steps;
+    mh_scroll_steps = 0.0f;
+
+    memset(frame->pad, 0, sizeof frame->pad);
+    memset(frame->pad_axes, 0, sizeof frame->pad_axes);
+    for (int jid = GLFW_JOYSTICK_1; jid <= GLFW_JOYSTICK_LAST; jid++) {
+        GLFWgamepadstate pad;
+        if (!glfwJoystickIsGamepad(jid) || !glfwGetGamepadState(jid, &pad))
+            continue;
+        for (int b = 0; b < MH_GAMEPAD_BUTTONS; b++)
+            frame->pad[b] = pad.buttons[b] == GLFW_PRESS;
+        for (int a = 0; a < 4; a++)
+            frame->pad_axes[a] = pad.axes[a];
+        frame->pad_axes[4] = (pad.axes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER] + 1.0f) * 0.5f; /* -1..1 to 0..1 */
+        frame->pad_axes[5] = (pad.axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER] + 1.0f) * 0.5f;
+        break;
+    }
 }
 
 static void mh_on_glfw_error(int code, const char *description)
@@ -138,14 +180,19 @@ int main(int argc, char **argv)
         fprintf(stderr, "menhir: there is no scene %d (the game has %d)\n", options.scene, game.scene_count);
         return 1;
     }
-    mh_scene scene;
-    mh_load_scene(&data, options.scene, &scene);
+    mh_world world;
+    mh_world_init(&world, &data, &game, options.scene);
     int width = options.width ? options.width : game.width;
     int height = options.height ? options.height : game.height;
 
     if (options.dump) {
-        mh_dump(&game, &scene, width, height);
-        mh_free_scene(&scene);
+        mh_dump(&game, &world, width, height);
+        mh_world_unload_all(&world);
+        return 0;
+    }
+    if (options.simulate) {
+        mh_simulate(&game, &world, options.simulate);
+        mh_world_unload_all(&world);
         return 0;
     }
 
@@ -167,7 +214,7 @@ int main(int argc, char **argv)
     }
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
-    glfwSetKeyCallback(window, mh_on_key);
+    glfwSetScrollCallback(window, mh_on_scroll);
     if (!gladLoadGL((GLADloadfunc)glfwGetProcAddress)) {
         fprintf(stderr, "menhir: OpenGL 3.3 is not available\n");
         return 1;
@@ -175,18 +222,38 @@ int main(int argc, char **argv)
 
     mh_renderer renderer;
     mh_renderer_init(&renderer, &data);
+    mh_input input;
+    mh_input_init(&input, &game);
+    mh_input_frame devices;
+    memset(&devices, 0, sizeof devices);
+    double last_x = 0, last_y = 0, last_time = glfwGetTime();
+    int has_last = 0, captured = 0;
     for (int frame = 0; !glfwWindowShouldClose(window); frame++) {
+        double now = glfwGetTime();
+        float dt = (float)fmin(now - last_time, 0.1); /* a long pause (e.g. dragging the window) is not a jump */
+        last_time = now;
+
+        mh_read_devices(window, &devices, &last_x, &last_y, &has_last);
+        if (devices.keys[GLFW_KEY_ESCAPE])
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        mh_input_update(&input, &devices, dt);
+        mh_world_update(&world, &input, dt);
+        if (world.changed)
+            mh_renderer_release_unused(&renderer, &world);
+        if (world.cursor_captured != captured) {
+            /* Hidden while a fly camera looks around; the jump it makes is not a mouse movement. */
+            captured = world.cursor_captured;
+            glfwSetInputMode(window, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+            glfwGetCursorPos(window, &last_x, &last_y);
+        }
+
         int fb_width, fb_height;
         glfwGetFramebufferSize(window, &fb_width, &fb_height);
         if (fb_width > 0 && fb_height > 0) {
             mh_renderer_resize(&renderer, fb_width, fb_height);
-            mat4 *world = malloc(sizeof(mat4) * (size_t)maxi(1, scene.entity_count));
-            mh_world_matrices(&scene, world);
             mh_view view;
-            mh_camera_view(&scene, world, (float)fb_width / (float)fb_height, &view);
-            free(world);
-
-            mh_render_frame(&renderer, &game, &scene, &view);
+            mh_world_view(&world, (float)fb_width / (float)fb_height, &view);
+            mh_render_frame(&renderer, &game, &world, &view);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, renderer.output_framebuffer);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             glBlitFramebuffer(0, 0, fb_width, fb_height, 0, 0, fb_width, fb_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -201,7 +268,7 @@ int main(int argc, char **argv)
 
     glfwDestroyWindow(window);
     glfwTerminate();
-    mh_free_scene(&scene);
+    mh_world_unload_all(&world);
     return 0;
 #endif
 }

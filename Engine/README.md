@@ -27,14 +27,18 @@ project (git-ignored):
 
 The build includes the scenes ticked in **Project Settings → Build** (all of them when none is, the open
 one first), with the open scene's unsaved changes. The game renders from the scene's first **Camera**
-(or from (0, 1, 10) looking down -Z), at the window size of the build settings. **Esc** quits.
+(or from (0, 1, 10) looking down -Z), at the window size of the build settings. **Esc** quits. Keyboard, mouse
+and the first gamepad drive the Input Manager's axes and buttons, read by the built-in Fly Camera and Scene
+Switcher components, which can also load other scenes ([Docs/Input.md](../Docs/Input.md)).
 
 ```sh
 ./MyGame [--scene n] [--size 1280x720] [--frames n] [--screenshot out.ppm] [--data GameData.binchunk] [--dump]
 ```
 
-`--dump` prints the first frame's matrices, lights and shadow maps without opening a window; the editor's
-tests compile the player with `-DMENHIR_HEADLESS` and compare it with what the editor computes.
+`--dump` prints the first frame's matrices, lights and shadow maps without opening a window, and
+`--simulate script.txt` plays input events (keys, mouse, gamepad, frames) and prints the axes, the loaded
+scenes and the fly cameras; the editor's tests compile the player with `-DMENHIR_HEADLESS` and compare both
+with what the editor computes.
 
 Building needs GCC or Clang (set in **Project Settings → Build**). On Linux, GLFW uses X11 and needs its
 development headers to compile (Debian/Ubuntu: `libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev
@@ -47,8 +51,10 @@ build files but have not been tried yet.
 | `src/mh_math.h` | Vectors and matrices with System.Numerics' conventions |
 | `src/mh_data.h`, `mh_data.c` | The binchunk reader |
 | `src/mh_scene.c` | World matrices, lights and camera (`Scene`, `SceneEnvironment`) |
+| `src/mh_input.c` | The Input Manager (`Input/InputState.cs`) |
+| `src/mh_world.c` | Loaded scenes, scene changes, built-in behaviours (`Runtime/FlyCameraBehaviour.cs`) |
 | `src/mh_shadows.c` | Shadow map placement (`ShadowSetup`) |
 | `src/mh_gl.c`, `mh_renderer.c`, `mh_post.c` | OpenGL helpers, scene passes, post-processing (`GLRenderer`, `GLPostProcessor`) |
-| `src/mh_dump.c` | `--dump` |
+| `src/mh_dump.c` | `--dump` and `--simulate` |
 
-Not there yet: scripts (IL2C), input for games, scene changes at run time, audio.
+Not there yet: scripts (IL2C), audio.

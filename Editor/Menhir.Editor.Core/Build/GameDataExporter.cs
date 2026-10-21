@@ -1,5 +1,6 @@
 using System.Numerics;
 using Menhir.Editor.Assets;
+using Menhir.Editor.Input;
 using Menhir.Editor.Lighting;
 using Menhir.Editor.Mathematics;
 using Menhir.Editor.PostProcessing;
@@ -29,24 +30,26 @@ public static class GameDataExporter
     /// <param name="loadTexture">A texture asset's image, or null when it cannot be loaded.</param>
     /// <param name="loadModel">A model asset's mesh; throws (InvalidData, NotSupported, IO) when it cannot be imported.</param>
     public static byte[] Export(string title, IReadOnlyList<BuildScene> scenes, RenderingSettings rendering,
-        BuildSettings build, Func<Guid, ImageData?> loadTexture, Func<Guid, MeshData> loadModel, List<string> warnings)
+        BuildSettings build, Func<Guid, ImageData?> loadTexture, Func<Guid, MeshData> loadModel, List<string> warnings,
+        InputSettings? input = null)
     {
         if (scenes.Count == 0)
             throw new ArgumentException("A build needs at least one scene.", nameof(scenes));
 
         var file = new BinChunkWriter();
-        file.Add(BinChunk.Game, 0, GameChunk(title, scenes.Count, rendering, build));
+        file.Add(BinChunk.Game, 0, GameChunk(title, scenes.Count, rendering, build, input ?? new InputSettings(), warnings));
 
         var meshes = new Meshes(file, loadModel);
         var textures = new Dictionary<object, uint>(); // FilmGrainType or texture Guid -> chunk id
         for (int i = 0; i < scenes.Count; i++)
-            file.Add(BinChunk.Scene, (uint)i, SceneChunk(scenes[i], meshes, textures, file, loadTexture, warnings));
+            file.Add(BinChunk.Scene, (uint)i, SceneChunk(scenes[i], scenes, meshes, textures, file, loadTexture, warnings));
         return file.ToArray();
     }
 
     public static uint MeshId(PrimitiveMesh mesh) => (uint)mesh + 1;
 
-    private static byte[] GameChunk(string title, int sceneCount, RenderingSettings rendering, BuildSettings build)
+    private static byte[] GameChunk(string title, int sceneCount, RenderingSettings rendering, BuildSettings build,
+        InputSettings input, List<string> warnings)
     {
         var w = new ChunkWriter();
         w.U32((uint)Math.Clamp(build.WindowWidth, 64, 7680));
@@ -67,6 +70,31 @@ public static class GameDataExporter
         w.F32(rendering.DepthBias);
         w.F32(rendering.NormalBias);
         w.U32((uint)ShadowSetup.FilterTaps(LightShadows.Soft, rendering));
+
+        w.U32((uint)input.Axes.Count);
+        foreach (InputAxis axis in input.Axes)
+        {
+            int Code(string name)
+            {
+                if (InputCodes.TryParse(name, out int code))
+                    return code;
+                warnings.Add($"Input axis {axis.Name}: '{name}' is not a key or button name; it is left out.");
+                return InputCodes.None;
+            }
+
+            w.String(axis.Name);
+            w.U32((uint)axis.Type);
+            w.I32(Code(axis.NegativeButton));
+            w.I32(Code(axis.PositiveButton));
+            w.I32(Code(axis.AltNegativeButton));
+            w.I32(Code(axis.AltPositiveButton));
+            w.F32(MathF.Max(axis.Gravity, 0f));
+            w.F32(MathF.Max(axis.Dead, 0f));
+            w.F32(MathF.Max(axis.Sensitivity, 0f));
+            w.Bool(axis.Snap);
+            w.Bool(axis.Invert);
+            w.U32((uint)Math.Clamp(axis.Axis, 0, 5));
+        }
         return w.ToArray();
     }
 
@@ -108,7 +136,7 @@ public static class GameDataExporter
         }
     }
 
-    private static byte[] SceneChunk(BuildScene buildScene, Meshes meshes, Dictionary<object, uint> textures,
+    private static byte[] SceneChunk(BuildScene buildScene, IReadOnlyList<BuildScene> allScenes, Meshes meshes, Dictionary<object, uint> textures,
         BinChunkWriter file, Func<Guid, ImageData?> loadTexture, List<string> warnings)
     {
         Scene scene = buildScene.Scene;
@@ -219,6 +247,44 @@ public static class GameDataExporter
         WritePostProcessing(w, environment.PostProcessing, lut, lutContribution,
             type => TextureId(type, () => TextureChunk(FilmGrainNoise.Size, FilmGrainNoise.Size, 1, repeat: true,
                 FilmGrainNoise.Generate(type))));
+
+        var flyCameras = Components<FlyCamera>(entities);
+        w.U32((uint)flyCameras.Count);
+        foreach ((int entity, FlyCamera fly) in flyCameras)
+        {
+            Vector3 euler = EulerAngles.FromQuaternion(entities[entity].Transform.Rotation);
+            w.U32((uint)entity);
+            w.F32(fly.MoveSpeed);
+            w.F32(fly.LookSpeed);
+            w.F32(MathF.Max(fly.FastMultiplier, 1f));
+            w.F32(euler.Y);
+            w.F32(euler.X);
+            w.String(fly.HorizontalAxis);
+            w.String(fly.VerticalAxis);
+            w.String(fly.LookXAxis);
+            w.String(fly.LookYAxis);
+            w.String(fly.FastButton);
+            w.Bool(fly.RequireRightMouseButton);
+        }
+
+        var switchers = new List<(int Entity, SceneSwitcher Switcher, int Scene)>();
+        foreach ((int entity, SceneSwitcher switcher) in Components<SceneSwitcher>(entities))
+        {
+            int target = allScenes.ToList().FindIndex(s => s.Name == switcher.Scene.Trim());
+            if (target < 0)
+                warnings.Add($"{buildScene.Name}: the Scene Switcher of {entities[entity].Name} loads '{switcher.Scene}', " +
+                             "which is not in the build; it is left out.");
+            else
+                switchers.Add((entity, switcher, target));
+        }
+        w.U32((uint)switchers.Count);
+        foreach ((int entity, SceneSwitcher switcher, int target) in switchers)
+        {
+            w.U32((uint)entity);
+            w.String(switcher.Button);
+            w.U32((uint)target);
+            w.U32((uint)switcher.Mode);
+        }
         return w.ToArray();
     }
 

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection.Metadata;
 using System.Text;
 using Menhir.Translator.TypeSystem;
 
@@ -56,6 +57,10 @@ public sealed class Il2cTranslator
         foreach (TypeDesc type in _types.ToList())
             BuildInterfaceMap(type);
 
+        MethodDesc? entry = entryPoint != null ? FindEntryPoint(entryPoint) : null;
+        if (entry != null)
+            UseArrayType(Context.MakeArray(Context.StringType));
+
         // Method bodies first: they register the string literals, arrays, data, generic
         // instantiations and methods they use, which are compiled in turn.
         var bodies = new StringBuilder();
@@ -81,9 +86,6 @@ public sealed class Il2cTranslator
                 Errors.Add($"{method}: {e.Message}");
             }
         }
-        MethodDesc? entry = entryPoint != null ? FindEntryPoint(entryPoint) : null;
-        if (entry != null)
-            UseArrayType(Context.MakeArray(Context.StringType));
         if (Errors.Count > 0)
             throw new TranslationException("Translation failed:\n  " + string.Join("\n  ", Errors));
 
@@ -494,8 +496,67 @@ public sealed class Il2cTranslator
 
     public void UseArrayType(TypeDesc arrayType)
     {
-        if (_arrayTypes.Add(arrayType) && arrayType.ElementType!.IsArray)
+        if (!_arrayTypes.Add(arrayType))
+            return;
+        if (arrayType.ElementType!.IsArray)
             UseArrayType(arrayType.ElementType);
+        RequireType(arrayType.ElementType);
+        BuildArrayInterfaceMap(arrayType);
+    }
+
+    /// <summary>
+    /// T[] implements IList&lt;T&gt;, IReadOnlyList&lt;T&gt; (and the collections and enumerables they
+    /// extend) through the corlib's SZArrayHelper&lt;T&gt;, whose static methods take the array first.
+    /// </summary>
+    private void BuildArrayInterfaceMap(TypeDesc arrayType)
+    {
+        TypeDesc element = arrayType.ElementType!;
+        if (element.IsPointer || element.IsByRef || element.ContainsGenericParameters || !HasCoreType("System", "SZArrayHelper`1"))
+            return;
+        TypeDesc helper = Context.Instantiate(Context.CoreType("System", "SZArrayHelper`1"), [element]);
+        RequireType(helper);
+        var map = new List<(TypeDesc, List<MethodDesc?>)>();
+        _interfaceMaps[arrayType] = map;
+        var roots = new[] { "IList`1", "IReadOnlyList`1" }
+            .Select(name => Context.Instantiate(Context.CoreType("System.Collections.Generic", name), [element]));
+        var interfaces = new List<TypeDesc>();
+        void Add(TypeDesc i)
+        {
+            if (interfaces.Contains(i))
+                return;
+            interfaces.Add(i);
+            foreach (TypeDesc inherited in i.DeclaredInterfaces)
+                Add(inherited);
+        }
+        foreach (TypeDesc root in roots)
+            Add(root);
+        foreach (TypeDesc interfaceType in interfaces)
+        {
+            RequireType(interfaceType);
+            var methods = new List<MethodDesc?>();
+            foreach (MethodDesc method in InterfaceMethods(interfaceType))
+            {
+                MethodDesc? implementation = helper.Methods.FirstOrDefault(m => m.IsStatic && m.Name == method.Name &&
+                                                                                m.ParameterTypes.Count == method.ParameterTypes.Count + 1);
+                if (implementation != null)
+                    RequireMethod(implementation);
+                methods.Add(implementation);
+            }
+            map.Add((interfaceType, methods));
+        }
+    }
+
+    private bool HasCoreType(string ns, string name)
+    {
+        try
+        {
+            Context.CoreType(ns, name);
+            return true;
+        }
+        catch (TranslationException)
+        {
+            return false;
+        }
     }
 
     private void WriteVTablesAndTypeInfos(StringBuilder c)
@@ -526,28 +587,11 @@ public sealed class Il2cTranslator
             TypeDesc? baseType = type.BaseType;
             string baseInfo = baseType != null ? "&" + Names.TypeInfo(baseType) : "NULL";
 
-            string interfaces = "NULL";
+            string interfaces = WriteInterfaceMap(c, type);
             var map = _interfaceMaps.GetValueOrDefault(type) ?? [];
-            if (map.Count > 0)
-            {
-                string mapName = Names.Type(type) + "__interfaces";
-                for (int i = 0; i < map.Count; i++)
-                {
-                    if (map[i].Methods.Count == 0)
-                        continue;
-                    c.Append($"static void* const {mapName}_{i}[] = {{ ");
-                    foreach (MethodDesc? method in map[i].Methods)
-                        c.Append($"(void*){VTableEntry(type, method)}, ");
-                    c.Append("};\n");
-                }
-                c.Append($"static const MInterfaceMap {mapName}[] = {{\n");
-                for (int i = 0; i < map.Count; i++)
-                    c.Append($"    {{ &{Names.TypeInfo(map[i].Interface)}, {(map[i].Methods.Count > 0 ? $"{mapName}_{i}" : "NULL")} }},\n");
-                c.Append("};\n");
-                interfaces = mapName;
-            }
+            string enumInfo = type.IsEnum ? WriteEnumInfo(c, type) : "NULL";
             c.Append($"const MType {Names.TypeInfo(type)} = {{ {CString(type.FullName)}, {baseInfo}, ");
-            c.Append($"{(flags.Count > 0 ? string.Join(" | ", flags) : "0")}, {size}, NULL, 0, {vtable}, {slots.Count}, {interfaces}, {map.Count} }};\n\n");
+            c.Append($"{(flags.Count > 0 ? string.Join(" | ", flags) : "0")}, {size}, NULL, 0, {vtable}, {slots.Count}, {interfaces}, {map.Count}, {enumInfo} }};\n\n");
         }
 
         foreach (TypeDesc array in _arrayTypes)
@@ -555,10 +599,82 @@ public sealed class Il2cTranslator
             TypeDesc element = array.ElementType!;
             int slots = VTable(Context.ArrayType).Count;
             string vtable = slots > 0 ? Names.VTable(Context.ArrayType) : "NULL";
+            string interfaces = WriteInterfaceMap(c, array);
+            int interfaceCount = _interfaceMaps.GetValueOrDefault(array)?.Count ?? 0;
             c.Append($"const MType {Names.TypeInfo(array)} = {{ {CString(array.FullName)}, &{Names.TypeInfo(Context.ArrayType)}, ");
-            c.Append($"M_TYPE_ARRAY, sizeof(MArray), &{Names.TypeInfo(element)}, sizeof({CType(element)}), {vtable}, {slots}, NULL, 0 }};\n");
+            c.Append($"M_TYPE_ARRAY, sizeof(MArray), &{Names.TypeInfo(element)}, sizeof({CType(element)}), {vtable}, {slots}, {interfaces}, {interfaceCount}, NULL }};\n");
         }
         c.Append('\n');
+    }
+
+    /// <summary>The type's interface map (interfaces and their implementations), or "NULL".</summary>
+    private string WriteInterfaceMap(StringBuilder c, TypeDesc type)
+    {
+        var map = _interfaceMaps.GetValueOrDefault(type) ?? [];
+        if (map.Count == 0)
+            return "NULL";
+        string mapName = Names.Type(type) + "__interfaces";
+        for (int i = 0; i < map.Count; i++)
+        {
+            if (map[i].Methods.Count == 0)
+                continue;
+            c.Append($"static void* const {mapName}_{i}[] = {{ ");
+            foreach (MethodDesc? method in map[i].Methods)
+                c.Append($"(void*){(type.IsArray ? method != null ? Names.Method(method) : "m_abstract_method" : VTableEntry(type, method))}, ");
+            c.Append("};\n");
+        }
+        c.Append($"static const MInterfaceMap {mapName}[] = {{\n");
+        for (int i = 0; i < map.Count; i++)
+            c.Append($"    {{ &{Names.TypeInfo(map[i].Interface)}, {(map[i].Methods.Count > 0 ? $"{mapName}_{i}" : "NULL")} }},\n");
+        c.Append("};\n");
+        return mapName;
+    }
+
+    /// <summary>The constants of an enum (names and values) for Enum.ToString; returns the MEnumInfo's address.</summary>
+    private string WriteEnumInfo(StringBuilder c, TypeDesc type)
+    {
+        var reader = type.Module!.Reader;
+        var constants = new List<(string Name, ulong Bits)>();
+        foreach (FieldDesc field in type.Fields.Where(f => f.IsStatic && f.IsLiteral))
+        {
+            var definition = reader.GetFieldDefinition(field.Handle);
+            var constant = reader.GetConstant(definition.GetDefaultValue());
+            var blob = reader.GetBlobReader(constant.Value);
+            ulong bits = constant.TypeCode switch
+            {
+                System.Reflection.Metadata.ConstantTypeCode.SByte => (ulong)(long)blob.ReadSByte(),
+                System.Reflection.Metadata.ConstantTypeCode.Byte => blob.ReadByte(),
+                System.Reflection.Metadata.ConstantTypeCode.Int16 => (ulong)(long)blob.ReadInt16(),
+                System.Reflection.Metadata.ConstantTypeCode.UInt16 => blob.ReadUInt16(),
+                System.Reflection.Metadata.ConstantTypeCode.Int32 => (ulong)(long)blob.ReadInt32(),
+                System.Reflection.Metadata.ConstantTypeCode.UInt32 => blob.ReadUInt32(),
+                System.Reflection.Metadata.ConstantTypeCode.Int64 => (ulong)blob.ReadInt64(),
+                System.Reflection.Metadata.ConstantTypeCode.UInt64 => blob.ReadUInt64(),
+                System.Reflection.Metadata.ConstantTypeCode.Char => blob.ReadChar(),
+                System.Reflection.Metadata.ConstantTypeCode.Boolean => blob.ReadBoolean() ? 1UL : 0UL,
+                _ => 0,
+            };
+            constants.Add((field.Name, bits));
+        }
+        bool isFlags = reader.GetTypeDefinition(type.Handle).GetCustomAttributes().Any(handle =>
+        {
+            var attribute = reader.GetCustomAttribute(handle);
+            EntityHandle ctor = attribute.Constructor;
+            EntityHandle parent = ctor.Kind == HandleKind.MemberReference
+                ? reader.GetMemberReference((MemberReferenceHandle)ctor).Parent
+                : reader.GetMethodDefinition((MethodDefinitionHandle)ctor).GetDeclaringType();
+            return Context.ResolveType(type.Module, parent).FullName == "System.FlagsAttribute";
+        });
+        bool isSigned = type.EnumUnderlyingType.Primitive is PrimitiveKind.I1 or PrimitiveKind.I2 or PrimitiveKind.I4 or PrimitiveKind.I8;
+        string name = Names.Type(type) + "__enum";
+        if (constants.Count > 0)
+        {
+            c.Append($"static const char* const {name}_names[] = {{ {string.Join(", ", constants.Select(k => CString(k.Name)))} }};\n");
+            c.Append($"static const uint64_t {name}_values[] = {{ {string.Join(", ", constants.Select(k => $"UINT64_C({k.Bits})"))} }};\n");
+        }
+        string names = constants.Count > 0 ? $"{name}_names" : "NULL", values = constants.Count > 0 ? $"{name}_values" : "NULL";
+        c.Append($"static const MEnumInfo {name} = {{ {constants.Count}, {(isFlags ? "true" : "false")}, {(isSigned ? "true" : "false")}, {names}, {values} }};\n");
+        return "&" + name;
     }
 
     private string VTableEntry(TypeDesc type, MethodDesc? method)

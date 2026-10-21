@@ -695,8 +695,18 @@ public sealed class MethodCompiler
             case ILOpCode.Ldtoken:
             {
                 EntityHandle handle = MetadataTokens.EntityHandle(ins.Token);
+                if (handle.Kind is HandleKind.TypeDefinition or HandleKind.TypeReference or HandleKind.TypeSpecification)
+                {
+                    // typeof(T): a RuntimeTypeHandle holding the type info's address.
+                    TypeDesc token = ResolveType(ins);
+                    TypeDesc handleType = _context.CoreType("System", "RuntimeTypeHandle");
+                    string temp = Declare(_translator.CType(handleType));
+                    Emit($"{temp}.{_names.Field(handleType.Fields.First(f => !f.IsStatic))} = (intptr_t)&{_translator.TypeInfo(token)};");
+                    PushFrom(handleType, temp);
+                    break;
+                }
                 if (handle.Kind != HandleKind.FieldDefinition && handle.Kind != HandleKind.MemberReference)
-                    throw Unsupported("ldtoken of types and methods is not supported yet (IL2C-2)");
+                    throw Unsupported("ldtoken of methods is not supported");
                 _stack.Add(new Entry(Kind.FieldToken, Field: _context.ResolveField(_module, handle, _generics)));
                 break;
             }
@@ -817,6 +827,16 @@ public sealed class MethodCompiler
                 var (e, v) = Pop();
                 if (type.IsReferenceType)
                     Push(new Entry(Kind.Ref, type), $"m_castclass({v}, &{TypeInfoFor(type)})");
+                else if (IsNullable(type))
+                {
+                    // null unboxes to an empty Nullable, a boxed value to a full one.
+                    TypeDesc inner = type.TypeArguments[0];
+                    var (hasValue, value) = NullableFields(type);
+                    string result = Declare(_translator.CType(type));
+                    Emit($"memset((void*)&{result}, 0, sizeof {result});");
+                    Emit($"if ({v} != NULL) {{ {result}.{value} = *({_translator.CType(inner)}*)m_unbox({v}, &{TypeInfoFor(inner)}); {result}.{hasValue} = true; }}");
+                    PushFrom(type, result);
+                }
                 else
                     PushFrom(type, $"*({_translator.CType(type)}*)m_unbox({v}, &{TypeInfoFor(type)})");
                 break;
@@ -896,6 +916,14 @@ public sealed class MethodCompiler
     }
 
     private string TypeInfoFor(TypeDesc type) => _translator.TypeInfo(type);
+
+    /// <summary>A new temporary variable, not assigned.</summary>
+    private string Declare(string type)
+    {
+        string name = $"t{_temp++}";
+        _variables[name] = type;
+        return name;
+    }
 
     private string Temp(string type, string value)
     {
@@ -1248,7 +1276,10 @@ public sealed class MethodCompiler
 
     private string StaticFieldName(FieldDesc field)
     {
-        if (_method.Owner != field.Owner && _translator.ClassInitCall(field.Owner) is { Length: > 0 } init)
+        // Methods of the type itself ran its static constructor on entry, unless the type is
+        // beforefieldinit (then static methods do not: the first field access does).
+        bool initialized = _method.Owner == field.Owner && (_method.IsStaticConstructor || !field.Owner.IsBeforeFieldInit);
+        if (!initialized && _translator.ClassInitCall(field.Owner) is { Length: > 0 } init)
             Emit(init);
         return _names.StaticField(field);
     }
@@ -1319,12 +1350,26 @@ public sealed class MethodCompiler
         Emit($"(({ElementType(element, array)}*)M_ARRAY_DATA(m_check_index((MArray*){va}, {index})))[{index}] = {ToStorage(element, value, vv)};");
     }
 
+    private bool IsNullable(TypeDesc type) => type.IsInstantiation && type.GenericDefinition!.FullName == "System.Nullable`1";
+
+    private (string HasValue, string Value) NullableFields(TypeDesc type) =>
+        (_names.Field(type.Fields.First(f => f.Name == "hasValue")), _names.Field(type.Fields.First(f => f.Name == "value")));
+
     private void Box(TypeDesc type)
     {
         var (e, v) = Pop();
         if (type.IsReferenceType)
         {
             Push(e, v);
+            return;
+        }
+        if (IsNullable(type))
+        {
+            // A Nullable boxes as its value, or as null when it has none.
+            TypeDesc inner = type.TypeArguments[0];
+            var (hasValue, value) = NullableFields(type);
+            string nullable = Temp(_translator.CType(type), v);
+            Push(new Entry(Kind.Ref, inner), $"{nullable}.{hasValue} ? m_box(&{_translator.TypeInfo(inner)}, (void*)&{nullable}.{value}) : NULL");
             return;
         }
         string temp = Temp(_translator.CType(type), ToStorage(type, e, v));
@@ -1353,7 +1398,15 @@ public sealed class MethodCompiler
             return;
         }
         if (type == _context.StringType)
-            throw Unsupported("new string(...) is not supported yet");
+        {
+            // new string(...) calls the matching static String.Ctor(...).
+            MethodDesc factory = type.Methods.FirstOrDefault(m => m.IsStatic && m.Name == "Ctor" &&
+                                                                  m.ParameterTypes.SequenceEqual(constructor.ParameterTypes))
+                                 ?? throw Unsupported($"no String.Ctor for {constructor}");
+            _translator.RequireMethod(factory);
+            Push(new Entry(Kind.Ref, type, NonNull: true), $"(MObject*){_names.Method(factory)}({string.Join(", ", args)})");
+            return;
+        }
         string obj = Temp("MObject*", $"m_new_object(&{_translator.TypeInfo(type)})");
         Emit($"{_names.Method(constructor)}({string.Join(", ", args.Prepend($"({_translator.CType(type)}){obj}"))});");
         if (_translator.IsDelegate(type) && _lastFunction is { IsStatic: true })

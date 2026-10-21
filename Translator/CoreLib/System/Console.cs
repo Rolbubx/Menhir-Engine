@@ -41,5 +41,11 @@ namespace System
         public static void WriteLine(ulong value) => WriteLine(value.ToString());
         public static void WriteLine(float value) => WriteLine(value.ToString());
         public static void WriteLine(double value) => WriteLine(value.ToString());
+        public static void WriteLine(string format, object arg0) => WriteLine(string.Format(format, arg0));
+        public static void WriteLine(string format, object arg0, object arg1) => WriteLine(string.Format(format, arg0, arg1));
+        public static void WriteLine(string format, object arg0, object arg1, object arg2) => WriteLine(string.Format(format, arg0, arg1, arg2));
+        public static void WriteLine(string format, params object[] arg) => WriteLine(string.Format(format, arg));
+        public static void Write(string format, object arg0) => Write(string.Format(format, arg0));
+        public static void Write(string format, params object[] arg) => Write(string.Format(format, arg));
     }
 }

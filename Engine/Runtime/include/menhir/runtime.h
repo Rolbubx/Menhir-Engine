@@ -28,6 +28,15 @@ extern "C" {
 
 typedef struct MType MType;
 
+/* Constants of an enum type, for Enum.ToString. Values are the bits of the underlying integer. */
+typedef struct MEnumInfo {
+    uint32_t count;
+    bool isFlags;
+    bool isSigned;
+    const char* const* names;
+    const uint64_t* values;
+} MEnumInfo;
+
 /* The methods of one interface on a type, in the interface's declaration order. */
 typedef struct MInterfaceMap {
     const MType* interfaceType;
@@ -58,6 +67,7 @@ struct MType {
     uint32_t vtableLength;
     const MInterfaceMap* interfaces; /* every interface the type implements, inherited ones included */
     uint32_t interfaceCount;
+    const MEnumInfo* enumInfo;       /* enums */
 };
 
 typedef struct MArray {

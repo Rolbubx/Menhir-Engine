@@ -20,9 +20,14 @@ namespace System
         [MethodImpl(MethodImplOptions.InternalCall)]
         protected extern object MemberwiseClone();
 
-        /// <summary>Full name of the object's type (no System.Type yet).</summary>
+        /// <summary>Full name of the object's type.</summary>
         [MethodImpl(MethodImplOptions.InternalCall)]
         internal extern string GetTypeName();
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        private extern nint GetTypeHandle();
+
+        public Type GetType() => new Type(GetTypeHandle());
     }
 
     public abstract class ValueType
@@ -31,6 +36,25 @@ namespace System
 
     public abstract class Enum : ValueType
     {
+        /// <summary>The constant's name, the names of a [Flags] combination ("A, B"), or the number.</summary>
+        public override string ToString() => EnumToString(this);
+
+        public string ToString(string format) => format == "D" || format == "d" ? EnumToNumber(this) : EnumToString(this);
+
+        public bool HasFlag(Enum flag) => (EnumBits(this) & EnumBits(flag)) == EnumBits(flag);
+
+        public override bool Equals(object obj) => obj != null && obj.GetTypeName() == GetTypeName() && EnumBits(obj) == EnumBits(this);
+
+        public override int GetHashCode() => (int)EnumBits(this);
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        private static extern string EnumToString(object value);
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        private static extern string EnumToNumber(object value);
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        private static extern long EnumBits(object value);
     }
 
     public struct Void
@@ -147,6 +171,7 @@ namespace System
 
     public struct RuntimeTypeHandle
     {
+        internal nint _value;
     }
 
     public struct RuntimeMethodHandle
@@ -157,8 +182,129 @@ namespace System
     {
     }
 
-    public abstract class Type
+    /// <summary>A type, for typeof and GetType: its name (no reflection over members).</summary>
+    public sealed class Type
     {
+        private readonly nint _handle;
+
+        internal Type(nint handle) { _handle = handle; }
+
+        public static Type GetTypeFromHandle(RuntimeTypeHandle handle) => new Type(handle._value);
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        private static extern string GetName(nint handle);
+
+        public string FullName => GetName(_handle);
+
+        public string Name
+        {
+            get
+            {
+                string full = FullName;
+                int bracket = full.IndexOf('[');
+                string bare = bracket > 0 && full[bracket + 1] != ']' ? full.Substring(0, bracket) : full;
+                int dot = bare.LastIndexOf('.'), plus = bare.LastIndexOf('+');
+                int start = (dot > plus ? dot : plus) + 1;
+                return full.Substring(start);
+            }
+        }
+
+        public override string ToString() => FullName;
+
+        public override bool Equals(object obj) => obj is Type other && other._handle == _handle;
+
+        public override int GetHashCode() => (int)_handle;
+
+        public static bool operator ==(Type a, Type b) => (object)a == null ? (object)b == null : (object)b != null && a._handle == b._handle;
+
+        public static bool operator !=(Type a, Type b) => !(a == b);
+    }
+
+    /// <summary>A value type that can also be empty (int?).</summary>
+    public struct Nullable<T> where T : struct
+    {
+        private readonly bool hasValue;
+        internal T value;
+
+        public Nullable(T value)
+        {
+            this.value = value;
+            hasValue = true;
+        }
+
+        public bool HasValue => hasValue;
+
+        public T Value => hasValue ? value : throw new InvalidOperationException("Nullable object must have a value.");
+
+        public T GetValueOrDefault() => value;
+
+        public T GetValueOrDefault(T defaultValue) => hasValue ? value : defaultValue;
+
+        public override bool Equals(object other) => !hasValue ? other == null : other != null && value.Equals(other);
+
+        public override int GetHashCode() => hasValue ? value.GetHashCode() : 0;
+
+        public override string ToString() => hasValue ? value.ToString() : "";
+
+        public static implicit operator T?(T value) => new T?(value);
+
+        public static explicit operator T(T? value) => value.Value;
+    }
+
+    public struct ValueTuple<T1, T2>
+    {
+        public T1 Item1;
+        public T2 Item2;
+
+        public ValueTuple(T1 item1, T2 item2)
+        {
+            Item1 = item1;
+            Item2 = item2;
+        }
+
+        public override string ToString() => "(" + Item1?.ToString() + ", " + Item2?.ToString() + ")";
+
+        public override bool Equals(object obj) =>
+            obj is ValueTuple<T1, T2> other &&
+            System.Collections.Generic.EqualityComparer<T1>.Default.Equals(Item1, other.Item1) &&
+            System.Collections.Generic.EqualityComparer<T2>.Default.Equals(Item2, other.Item2);
+
+        public override int GetHashCode() => (Item1 == null ? 0 : Item1.GetHashCode()) * 31 + (Item2 == null ? 0 : Item2.GetHashCode());
+    }
+
+    public struct ValueTuple<T1, T2, T3>
+    {
+        public T1 Item1;
+        public T2 Item2;
+        public T3 Item3;
+
+        public ValueTuple(T1 item1, T2 item2, T3 item3)
+        {
+            Item1 = item1;
+            Item2 = item2;
+            Item3 = item3;
+        }
+
+        public override string ToString() => "(" + Item1?.ToString() + ", " + Item2?.ToString() + ", " + Item3?.ToString() + ")";
+    }
+
+    public struct ValueTuple<T1, T2, T3, T4>
+    {
+        public T1 Item1;
+        public T2 Item2;
+        public T3 Item3;
+        public T4 Item4;
+
+        public ValueTuple(T1 item1, T2 item2, T3 item3, T4 item4)
+        {
+            Item1 = item1;
+            Item2 = item2;
+            Item3 = item3;
+            Item4 = item4;
+        }
+
+        public override string ToString() =>
+            "(" + Item1?.ToString() + ", " + Item2?.ToString() + ", " + Item3?.ToString() + ", " + Item4?.ToString() + ")";
     }
 
     public interface IDisposable
@@ -253,6 +399,27 @@ namespace System.Threading
 
 namespace System.Runtime.CompilerServices
 {
+    [AttributeUsage(AttributeTargets.All)]
+    public sealed class TupleElementNamesAttribute : Attribute
+    {
+        public TupleElementNamesAttribute(string[] transformNames)
+        {
+        }
+    }
+
+    [AttributeUsage(AttributeTargets.All)]
+    public sealed class NullableAttribute : Attribute
+    {
+        public NullableAttribute(byte value) { }
+        public NullableAttribute(byte[] value) { }
+    }
+
+    [AttributeUsage(AttributeTargets.All)]
+    public sealed class NullableContextAttribute : Attribute
+    {
+        public NullableContextAttribute(byte value) { }
+    }
+
     public enum MethodImplOptions
     {
         NoInlining = 8,

@@ -415,3 +415,157 @@ MObject* System_Object__MemberwiseClone(MObject* self)
 {
     return m_clone(self);
 }
+
+/* ---- Number formatting and parsing (NumberFormat and Number in the corlib) ------------------ */
+
+/* UTF-8 copy of an ASCII-only string (numbers), into a caller buffer. */
+static void m_ascii(MString* s, char* buffer, size_t size)
+{
+    size_t n = 0;
+    for (int32_t i = 0; i < s->length && n + 1 < size; i++)
+        buffer[n++] = s->chars[i] < 128 ? (char)s->chars[i] : '?';
+    buffer[n] = 0;
+}
+
+MString* System_NumberFormat__Printf(double value, int32_t precision, uint16_t kind)
+{
+    if (precision < 0) precision = 0;
+    if (precision > 340) precision = 340;
+    char buffer[720];
+    snprintf(buffer, sizeof buffer, kind == 'e' ? "%.*e" : "%.*f", precision, value);
+    return m_string_from_utf8(buffer);
+}
+
+double System_Number__ParseFloat(MString* text, bool single)
+{
+    char buffer[512];
+    m_ascii(text, buffer, sizeof buffer);
+    return single ? (double)strtof(buffer, NULL) : strtod(buffer, NULL);
+}
+
+double System_Math__Asin(double d) { return asin(d); }
+double System_Math__Acos(double d) { return acos(d); }
+double System_Math__Atan(double d) { return atan(d); }
+double System_Math__Sinh(double v) { return sinh(v); }
+double System_Math__Cosh(double v) { return cosh(v); }
+double System_Math__Tanh(double v) { return tanh(v); }
+double System_Math__Log10(double d) { return log10(d); }
+double System_Math__Log2(double d) { return log2(d); }
+double System_Math__Truncate(double d) { return trunc(d); }
+double System_Math__Cbrt(double d) { return cbrt(d); }
+
+float System_MathF__Sqrt(float x) { return sqrtf(x); }
+float System_MathF__Sin(float x) { return sinf(x); }
+float System_MathF__Cos(float x) { return cosf(x); }
+float System_MathF__Tan(float x) { return tanf(x); }
+float System_MathF__Asin(float x) { return asinf(x); }
+float System_MathF__Acos(float x) { return acosf(x); }
+float System_MathF__Atan(float x) { return atanf(x); }
+float System_MathF__Atan2(float y, float x) { return atan2f(y, x); }
+float System_MathF__Pow(float x, float y) { return powf(x, y); }
+float System_MathF__Exp(float x) { return expf(x); }
+float System_MathF__Log(float x) { return logf(x); }
+float System_MathF__Log10(float x) { return log10f(x); }
+float System_MathF__Log2(float x) { return log2f(x); }
+float System_MathF__Floor(float x) { return floorf(x); }
+float System_MathF__Ceiling(float x) { return ceilf(x); }
+float System_MathF__Truncate(float x) { return truncf(x); }
+float System_MathF__Round(float x) { return nearbyintf(x); }
+
+#include <time.h>
+int32_t System_Random__TimeSeed(void)
+{
+    struct timespec now;
+    timespec_get(&now, TIME_UTC);
+    return (int32_t)(now.tv_nsec ^ now.tv_sec);
+}
+
+/* ---- Type and Enum (the corlib's internal calls) -------------------------------------------- */
+
+intptr_t System_Object__GetTypeHandle(MObject* self)
+{
+    return (intptr_t)self->type;
+}
+
+MString* System_Type__GetName(intptr_t handle)
+{
+    return m_string_from_utf8(((const MType*)handle)->name);
+}
+
+/* The enum value in a box, as the bits of its underlying integer (sign-extended if signed). */
+static uint64_t m_enum_bits(MObject* box)
+{
+    const MType* type = box->type;
+    const void* data = M_BOX_DATA(box);
+    bool isSigned = type->enumInfo != NULL && type->enumInfo->isSigned;
+    switch (type->instanceSize) {
+    case 1: return isSigned ? (uint64_t)(int64_t)*(const int8_t*)data : *(const uint8_t*)data;
+    case 2: return isSigned ? (uint64_t)(int64_t)*(const int16_t*)data : *(const uint16_t*)data;
+    case 4: return isSigned ? (uint64_t)(int64_t)*(const int32_t*)data : *(const uint32_t*)data;
+    default: return *(const uint64_t*)data;
+    }
+}
+
+MString* System_Enum__EnumToNumber(MObject* box)
+{
+    char text[32];
+    uint64_t bits = m_enum_bits(box);
+    const MEnumInfo* info = box->type->enumInfo;
+    if (info != NULL && info->isSigned)
+        snprintf(text, sizeof text, "%lld", (long long)bits);
+    else
+        snprintf(text, sizeof text, "%llu", (unsigned long long)bits);
+    return m_string_from_utf8(text);
+}
+
+int64_t System_Enum__EnumBits(MObject* box)
+{
+    return (int64_t)m_enum_bits(box);
+}
+
+MString* System_Enum__EnumToString(MObject* box)
+{
+    const MEnumInfo* info = box->type->enumInfo;
+    uint64_t bits = m_enum_bits(box);
+    if (info == NULL)
+        return System_Enum__EnumToNumber(box);
+    for (uint32_t i = 0; i < info->count; i++)
+        if (info->values[i] == bits)
+            return m_string_from_utf8(info->names[i]);
+    if (!info->isFlags || bits == 0)
+        return System_Enum__EnumToNumber(box);
+    /* Flags: the constants that make up the value, largest first, written smallest first. */
+    uint64_t rest = bits;
+    bool used[64] = { false };
+    uint32_t count = info->count < 64 ? info->count : 64;
+    for (int pass = 0; pass < (int)count && rest != 0; pass++) {
+        int best = -1;
+        for (uint32_t i = 0; i < count; i++)
+            if (!used[i] && info->values[i] != 0 && (info->values[i] & rest) == info->values[i] &&
+                (best < 0 || info->values[i] > info->values[best]))
+                best = (int)i;
+        if (best < 0)
+            break;
+        used[best] = true;
+        rest &= ~info->values[best];
+    }
+    if (rest != 0)
+        return System_Enum__EnumToNumber(box);
+    char text[1024];
+    size_t n = 0;
+    text[0] = 0;
+    /* .NET lists them in ascending value order. */
+    for (;;) {
+        int next = -1;
+        for (uint32_t i = 0; i < count; i++)
+            if (used[i] && (next < 0 || info->values[i] < info->values[next]))
+                next = (int)i;
+        if (next < 0)
+            break;
+        used[next] = false;
+        n += (size_t)snprintf(text + n, sizeof text - n, "%s%s", n > 0 ? ", " : "", info->names[next]);
+        if (n >= sizeof text)
+            break;
+    }
+    return m_string_from_utf8(text);
+}

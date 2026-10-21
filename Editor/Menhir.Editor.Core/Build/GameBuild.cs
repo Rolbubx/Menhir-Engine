@@ -1,5 +1,7 @@
 using Menhir.Editor.Assets;
+using Menhir.Editor.Assets.Importers;
 using Menhir.Editor.Projects;
+using Menhir.Editor.Rendering;
 using Menhir.Editor.Scenes;
 using Menhir.Editor.Serialization;
 
@@ -35,7 +37,7 @@ public static class GameBuild
 
         log($"Exporting {scenes.Count} scene(s) to {DataFileName}");
         byte[] data = GameDataExporter.Export(project.Name, scenes, project.Settings.Rendering, project.Settings.Build,
-            guid => LoadTexture(project, guid), warnings);
+            guid => LoadTexture(project, guid), guid => LoadModel(project, guid), warnings);
         File.WriteAllBytes(Path.Combine(directory, DataFileName), data);
 
         log("Writing main.c");
@@ -106,6 +108,13 @@ public static class GameBuild
         {
             return null;
         }
+    }
+
+    private static MeshData LoadModel(Project project, Guid guid)
+    {
+        if (project.Assets.FindByGuid(guid) is not { IsFolder: false } entry)
+            throw new IOException("the asset does not exist");
+        return ModelImporter.Import(project.Assets.ToAbsolutePath(entry.Path));
     }
 
     /// <summary>The project name as a file name: letters, digits, '-' and '_' (others become '_').</summary>

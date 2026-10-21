@@ -1,8 +1,9 @@
 namespace Menhir.Editor.Assets;
 
 /// <summary>
-/// Importer names written in .meta files. Nothing is imported yet; the name only
-/// records which importer will handle the asset once importing exists.
+/// Importer names written in .meta files. Textures (PNG) and models (OBJ, glTF, see
+/// <see cref="Importers.ModelImporter"/>) are imported when they are used; the others only record
+/// which importer will handle the asset once importing exists.
 /// </summary>
 public static class AssetImporters
 {

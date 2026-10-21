@@ -55,6 +55,7 @@ typedef struct {
 typedef struct {
     int entity;
     uint32_t mesh;
+    vec3 bounds_min, bounds_max; /* the mesh's box, for shadow fitting */
     vec4 color;
     float metallic, smoothness;
     int cast_shadows, receive_shadows;

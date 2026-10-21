@@ -302,7 +302,6 @@ static void mh_render_frame(mh_renderer *r, const mh_game *game, const mh_scene 
 
     int draw_count = 0;
     mh_bounds casters = { 0, { 0, 0, 0 }, { 0, 0, 0 } };
-    mh_bounds cube = { 1, { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f } };
     for (int i = 0; i < scene->renderer_count; i++) {
         const mh_mesh_renderer *renderer = &scene->renderers[i];
         const mh_gpu_mesh *mesh = mh_renderer_mesh(r, renderer->mesh);
@@ -314,7 +313,7 @@ static void mh_render_frame(mh_renderer *r, const mh_game *game, const mh_scene 
         d->normal_matrix = m4_normal_matrix(d->model);
         d->renderer = renderer;
         if (renderer->cast_shadows)
-            casters = mh_bounds_encapsulate(casters, mh_bounds_transform(cube, d->model));
+            casters = mh_bounds_encapsulate(casters, mh_renderer_bounds(renderer, d->model));
     }
 
     mh_main_shadows main_shadows;

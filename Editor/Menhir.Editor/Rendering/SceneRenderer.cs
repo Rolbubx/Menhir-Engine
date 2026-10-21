@@ -1,5 +1,6 @@
 using System.Numerics;
 using Menhir.Editor.Assets;
+using Menhir.Editor.Assets.Importers;
 using Menhir.Editor.Lighting;
 using Menhir.Editor.Logging;
 using Menhir.Editor.Mathematics;
@@ -23,11 +24,11 @@ public sealed class SceneRenderer : IDisposable
     // Background when the skybox is hidden (linear; the old flat gray).
     private static readonly Vector3 ClearColor = new(0.026f, 0.029f, 0.034f);
     private static readonly Vector4 SelectionColor = new(1f, 0.6f, 0.1f, 1f);
-    private static readonly Bounds CubeBounds = new(new Vector3(-0.5f), new Vector3(0.5f));
 
     private readonly IRenderer _renderer;
     private readonly Func<Guid, string?> _resolveAssetPath;
-    private readonly Dictionary<PrimitiveMesh, IMesh> _primitives = new();
+    private readonly Dictionary<PrimitiveMesh, (IMesh Mesh, Bounds Bounds)> _primitives = new();
+    private readonly Dictionary<Guid, ((IMesh Mesh, Bounds Bounds)? Model, DateTime Modified)> _models = new();
     private readonly Dictionary<Guid, (ITexture? Texture, DateTime Modified)> _textures = new();
 
     /// <param name="resolveAssetPath">Absolute file path of an asset GUID (for textures), or null.</param>
@@ -35,7 +36,8 @@ public sealed class SceneRenderer : IDisposable
     {
         _renderer = renderer;
         _resolveAssetPath = resolveAssetPath;
-        _primitives[PrimitiveMesh.Cube] = renderer.CreateMesh(Primitives.CreateCube());
+        MeshData cube = Primitives.CreateCube();
+        _primitives[PrimitiveMesh.Cube] = (renderer.CreateMesh(cube), cube.Bounds);
     }
 
     /// <param name="settings">The project's pipeline settings (shadows).</param>
@@ -50,16 +52,16 @@ public sealed class SceneRenderer : IDisposable
         Bounds? casterBounds = null;
         foreach (Entity entity in scene.Entities)
         {
-            if (entity.GetComponent<MeshRenderer>() is not { } meshRenderer)
+            if (entity.GetComponent<MeshRenderer>() is not { } meshRenderer || GetMesh(meshRenderer) is not var (mesh, meshBounds))
                 continue;
             Matrix4x4 world = scene.GetWorldMatrix(entity);
-            var draw = new MeshDraw(_primitives[meshRenderer.Mesh], world,
+            var draw = new MeshDraw(mesh, world,
                 new SurfaceParams(meshRenderer.Color, meshRenderer.Metallic, meshRenderer.Smoothness, meshRenderer.ReceiveShadows));
             draws.Add(draw);
             if (!meshRenderer.CastShadows)
                 continue;
             casters.Add(draw);
-            Bounds bounds = Bounds.Transform(CubeBounds, world);
+            Bounds bounds = Bounds.Transform(meshBounds, world);
             casterBounds = casterBounds?.Encapsulate(bounds) ?? bounds;
         }
 
@@ -86,9 +88,41 @@ public sealed class SceneRenderer : IDisposable
         ITexture? lookup = stack.ColorLookup?.Texture is { } guid ? GetTexture(guid) : null;
         _renderer.PostProcess(stack, lookup);
 
-        if (scene.Find(selectedEntityId) is { } selected && selected.GetComponent<MeshRenderer>() is { } selectedRenderer)
-            _renderer.DrawOutline(_primitives[selectedRenderer.Mesh], scene.GetWorldMatrix(selected), SelectionColor);
+        if (scene.Find(selectedEntityId) is { } selected && selected.GetComponent<MeshRenderer>() is { } selectedRenderer &&
+            GetMesh(selectedRenderer) is var (selectedMesh, _))
+            _renderer.DrawOutline(selectedMesh, scene.GetWorldMatrix(selected), SelectionColor);
         _renderer.EndFrame();
+    }
+
+    /// <summary>The renderer's model, or its built-in mesh; null when the model cannot be loaded.</summary>
+    private (IMesh Mesh, Bounds Bounds)? GetMesh(MeshRenderer renderer) =>
+        renderer.Model is { } guid ? GetModel(guid) : _primitives.GetValueOrDefault(renderer.Mesh);
+
+    /// <summary>A model asset, imported on first use and again when its file changes.</summary>
+    private (IMesh Mesh, Bounds Bounds)? GetModel(Guid guid)
+    {
+        string? path = _resolveAssetPath(guid);
+        DateTime modified = path != null && File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+        if (_models.TryGetValue(guid, out var cached) && cached.Modified == modified)
+            return cached.Model;
+
+        cached.Model?.Mesh.Dispose();
+        (IMesh, Bounds)? model = null;
+        if (path != null && modified != DateTime.MinValue)
+        {
+            try
+            {
+                MeshData data = ModelImporter.Import(path);
+                model = (_renderer.CreateMesh(data), data.Bounds);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException
+                                          or NotSupportedException)
+            {
+                Log.Warning($"Could not import the model {Path.GetFileName(path)}: {e.Message}");
+            }
+        }
+        _models[guid] = (model, modified);
+        return model;
     }
 
     /// <summary>A texture asset, loaded on first use and again when its file changes.</summary>
@@ -119,9 +153,12 @@ public sealed class SceneRenderer : IDisposable
 
     public void Dispose()
     {
-        foreach (IMesh mesh in _primitives.Values)
+        foreach (var (mesh, _) in _primitives.Values)
             mesh.Dispose();
         _primitives.Clear();
+        foreach (var (model, _) in _models.Values)
+            model?.Mesh.Dispose();
+        _models.Clear();
         foreach (var (texture, _) in _textures.Values)
             texture?.Dispose();
         _textures.Clear();

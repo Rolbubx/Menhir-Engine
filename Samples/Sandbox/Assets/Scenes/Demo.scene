@@ -1,7 +1,27 @@
 {
   "version": 1,
-  "nextLocalId": 10,
+  "nextLocalId": 13,
   "entities": [
+    {
+      "id": 10,
+      "parent": 0,
+      "name": "Main Camera",
+      "transform": {
+        "position": [0, 3, 9],
+        "rotation": [-0.13052619, 0, 0, 0.9914449],
+        "scale": [1, 1, 1]
+      },
+      "components": [
+        {
+          "type": "Camera",
+          "fieldOfView": 60,
+          "nearClipPlane": 0.3,
+          "farClipPlane": 1000,
+          "clearFlags": "Skybox",
+          "background": [0.0307, 0.0742, 0.1912, 1]
+        }
+      ]
+    },
     {
       "id": 1,
       "parent": 0,
@@ -15,9 +35,12 @@
         {
           "type": "MeshRenderer",
           "mesh": "Cube",
+          "model": null,
           "color": [0.531, 0.531, 0.531, 1],
           "metallic": 0,
-          "smoothness": 0.5
+          "smoothness": 0.5,
+          "castShadows": true,
+          "receiveShadows": true
         }
       ]
     },
@@ -34,9 +57,12 @@
         {
           "type": "MeshRenderer",
           "mesh": "Cube",
+          "model": null,
           "color": [0.699, 0.071, 0.047, 1],
           "metallic": 0,
-          "smoothness": 0.5
+          "smoothness": 0.5,
+          "castShadows": true,
+          "receiveShadows": true
         }
       ]
     },
@@ -53,9 +79,12 @@
         {
           "type": "MeshRenderer",
           "mesh": "Cube",
+          "model": null,
           "color": [0.071, 0.268, 0.699, 1],
           "metallic": 0,
-          "smoothness": 0.5
+          "smoothness": 0.5,
+          "castShadows": true,
+          "receiveShadows": true
         }
       ]
     },
@@ -72,9 +101,12 @@
         {
           "type": "MeshRenderer",
           "mesh": "Cube",
+          "model": null,
           "color": [0.099, 0.531, 0.133, 1],
           "metallic": 0,
-          "smoothness": 0.5
+          "smoothness": 0.5,
+          "castShadows": true,
+          "receiveShadows": true
         }
       ]
     },
@@ -91,9 +123,12 @@
         {
           "type": "MeshRenderer",
           "mesh": "Cube",
+          "model": null,
           "color": [0.893, 0.612, 0.071, 1],
           "metallic": 0,
-          "smoothness": 0.5
+          "smoothness": 0.5,
+          "castShadows": true,
+          "receiveShadows": true
         }
       ]
     },
@@ -110,9 +145,12 @@
         {
           "type": "MeshRenderer",
           "mesh": "Cube",
+          "model": null,
           "color": [0.35, 0.35, 0.35, 1],
           "metallic": 0,
-          "smoothness": 0.5
+          "smoothness": 0.5,
+          "castShadows": true,
+          "receiveShadows": true
         }
       ]
     },
@@ -122,7 +160,7 @@
       "name": "Directional Light",
       "transform": {
         "position": [0, 3, 0],
-        "rotation": [-0.4082179, -0.23456971, -0.10938165, 0.87542605],
+        "rotation": [-0.40821794, -0.23456973, -0.10938166, 0.8754261],
         "scale": [1, 1, 1]
       },
       "components": [
@@ -196,6 +234,50 @@
           "intensity": 0.2,
           "smoothness": 0.2,
           "rounded": false
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "parent": 0,
+      "name": "Crate",
+      "transform": {
+        "position": [-2.4, 0.5, 2.2],
+        "rotation": [0, 0.1736482, 0, 0.9848078],
+        "scale": [1, 1, 1]
+      },
+      "components": [
+        {
+          "type": "MeshRenderer",
+          "mesh": "Cube",
+          "model": "754fb00f-351d-4d7e-a9c1-dd884f56a142",
+          "color": [0.55, 0.35, 0.18, 1],
+          "metallic": 0,
+          "smoothness": 0.5,
+          "castShadows": true,
+          "receiveShadows": true
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "parent": 0,
+      "name": "Pebble",
+      "transform": {
+        "position": [3.2, 0, 2.6],
+        "rotation": [0, 0, 0, 1],
+        "scale": [1.5, 1.5, 1.5]
+      },
+      "components": [
+        {
+          "type": "MeshRenderer",
+          "mesh": "Cube",
+          "model": "293a4f79-a3f9-4728-b8a8-e4300ae48b78",
+          "color": [0.45, 0.5, 0.55, 1],
+          "metallic": 0,
+          "smoothness": 0.5,
+          "castShadows": true,
+          "receiveShadows": true
         }
       ]
     }

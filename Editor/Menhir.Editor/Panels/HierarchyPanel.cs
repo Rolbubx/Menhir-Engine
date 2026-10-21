@@ -180,7 +180,10 @@ public sealed class HierarchyPanel : EditorPanel
         ImGui.EndDragDropSource();
     }
 
-    /// <summary>Accepts a dragged entity and parents it to <paramref name="newParentId"/> (0 = root).</summary>
+    /// <summary>
+    /// Accepts a dragged entity and parents it to <paramref name="newParentId"/> (0 = root), or a model
+    /// from the Project panel, which creates an entity drawing it there.
+    /// </summary>
     private unsafe void DrawDropTarget(long newParentId)
     {
         if (!ImGui.BeginDragDropTarget())
@@ -195,6 +198,21 @@ public sealed class HierarchyPanel : EditorPanel
             {
                 _pendingChange = () => _context.Execute(new ReparentEntityCommand(Scene, dragged, newParentId));
             }
+        }
+
+        ImGuiPayloadPtr asset = ImGui.AcceptDragDropPayload(ProjectPanel.AssetPayload);
+        if (asset.NativePtr != null && asset.Data != IntPtr.Zero && asset.DataSize == sizeof(Guid) &&
+            _context.Project?.Assets.FindByGuid(*(Guid*)asset.Data) is { IsFolder: false } entry &&
+            entry.Meta.Importer == AssetImporters.Model)
+        {
+            Guid model = entry.Guid;
+            _pendingChange = () =>
+            {
+                var command = new CreateEntityCommand(Scene, Path.GetFileNameWithoutExtension(entry.Name), newParentId,
+                    () => [new MeshRenderer { Model = model }]);
+                _context.Execute(command);
+                _context.SelectedEntityId = command.Entity!.LocalId;
+            };
         }
         ImGui.EndDragDropTarget();
     }

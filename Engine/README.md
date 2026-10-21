@@ -51,4 +51,4 @@ build files but have not been tried yet.
 | `src/mh_gl.c`, `mh_renderer.c`, `mh_post.c` | OpenGL helpers, scene passes, post-processing (`GLRenderer`, `GLPostProcessor`) |
 | `src/mh_dump.c` | `--dump` |
 
-Not there yet: scripts (IL2C), input for games, scene changes at run time, audio, imported meshes.
+Not there yet: scripts (IL2C), input for games, scene changes at run time, audio.

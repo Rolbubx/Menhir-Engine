@@ -136,7 +136,10 @@ public static class ComponentDrawer
                 return true;
 
             case Guid or null when property.PropertyType == typeof(Guid?) && property.GetCustomAttribute<TextureAssetAttribute>() != null:
-                return TextureField((Guid?)value, assets, out newValue);
+                return AssetField((Guid?)value, assets, AssetImporters.Texture, Icons.Texture, out newValue);
+
+            case Guid or null when property.PropertyType == typeof(Guid?) && property.GetCustomAttribute<ModelAssetAttribute>() != null:
+                return AssetField((Guid?)value, assets, AssetImporters.Model, Icons.Model, out newValue);
 
             default:
                 ImGui.TextDisabled($"({property.PropertyType.Name} not supported yet)");
@@ -201,33 +204,33 @@ public static class ComponentDrawer
         return true;
     }
 
-    /// <summary>Picks a texture of the project, or None.</summary>
-    private static bool TextureField(Guid? value, AssetDatabase? assets, out object? newValue)
+    /// <summary>Picks an asset of the project handled by <paramref name="importer"/>, or None.</summary>
+    private static bool AssetField(Guid? value, AssetDatabase? assets, string importer, string icon, out object? newValue)
     {
         newValue = value;
         AssetEntry? current = value is { } guid ? assets?.FindByGuid(guid) : null;
-        string label = value == null ? "None" : current != null ? $"{Icons.Texture}  {current.Name}" : "Missing";
+        string label = value == null ? "None" : current != null ? $"{icon}  {current.Name}" : "Missing";
         bool changed = false;
-        if (ImGui.BeginCombo("##texture", label))
+        if (ImGui.BeginCombo("##asset", label))
         {
             if (ImGui.Selectable("None", value == null))
             {
                 newValue = null;
                 changed = value != null;
             }
-            IEnumerable<AssetEntry> textures = (assets?.GetAllEntries() ?? [])
-                .Where(e => e.Meta.Importer == AssetImporters.Texture)
+            IEnumerable<AssetEntry> entries = (assets?.GetAllEntries() ?? [])
+                .Where(e => !e.IsFolder && e.Meta.Importer == importer)
                 .OrderBy(e => e.Path, StringComparer.OrdinalIgnoreCase);
-            foreach (AssetEntry texture in textures)
+            foreach (AssetEntry entry in entries)
             {
-                bool selected = texture.Guid == value;
-                if (ImGui.Selectable($"{Icons.Texture}  {texture.Name}##{texture.Guid}", selected) && !selected)
+                bool selected = entry.Guid == value;
+                if (ImGui.Selectable($"{icon}  {entry.Name}##{entry.Guid}", selected) && !selected)
                 {
-                    newValue = (Guid?)texture.Guid;
+                    newValue = (Guid?)entry.Guid;
                     changed = true;
                 }
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip(texture.Path);
+                    ImGui.SetTooltip(entry.Path);
             }
             ImGui.EndCombo();
         }

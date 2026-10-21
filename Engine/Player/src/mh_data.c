@@ -259,12 +259,14 @@ static void mh_load_scene(mh_data *data, int index, mh_scene *scene)
             mh_fatal("%s", "the scene refers to a missing entity"); \
     } while (0)
 
-    scene->renderer_count = mh_count(&r, 40);
+    scene->renderer_count = mh_count(&r, 64);
     scene->renderers = mh_alloc(sizeof(mh_mesh_renderer) * (size_t)scene->renderer_count);
     for (int i = 0; i < scene->renderer_count; i++) {
         mh_mesh_renderer *m = &scene->renderers[i];
         MH_ENTITY_INDEX(m->entity);
         m->mesh = mh_u32(&r);
+        m->bounds_min = mh_vec3(&r);
+        m->bounds_max = mh_vec3(&r);
         m->color = mh_vec4(&r);
         m->metallic = mh_f32(&r);
         m->smoothness = mh_f32(&r);

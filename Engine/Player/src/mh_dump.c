@@ -57,10 +57,9 @@ static void mh_dump(const mh_game *game, const mh_scene *scene, int width, int h
     }
 
     mh_bounds casters = { 0, { 0, 0, 0 }, { 0, 0, 0 } };
-    mh_bounds cube = { 1, { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f } };
     for (int i = 0; i < scene->renderer_count; i++)
         if (scene->renderers[i].cast_shadows)
-            casters = mh_bounds_encapsulate(casters, mh_bounds_transform(cube, world[scene->renderers[i].entity]));
+            casters = mh_bounds_encapsulate(casters, mh_renderer_bounds(&scene->renderers[i], world[scene->renderers[i].entity]));
 
     mh_main_shadows main_shadows;
     mh_main_light_shadows(&env, &view, &game->rendering, casters, &main_shadows);

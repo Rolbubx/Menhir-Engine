@@ -9,11 +9,19 @@ public enum PrimitiveMesh
     Cube,
 }
 
-/// <summary>Draws a mesh at the entity's transform, shaded like URP's Lit material.</summary>
+/// <summary>
+/// Draws a mesh at the entity's transform, shaded like URP's Lit material: an imported model
+/// (<see cref="Model"/>) or else a built-in mesh.
+/// </summary>
 [ComponentCategory("Rendering")]
 public sealed class MeshRenderer : Component
 {
+    [Tooltip("Built-in mesh, drawn when no Model is set.")]
     public PrimitiveMesh Mesh { get; set; } = PrimitiveMesh.Cube;
+
+    [ModelAsset]
+    [Tooltip("An imported model (.obj, .gltf, .glb); replaces Mesh.")]
+    public Guid? Model { get; set; }
 
     /// <summary>Linear RGBA color.</summary>
     [Color]

@@ -119,7 +119,13 @@ The viewport renders like URP: scenes are lit and drawn in HDR, then post-proces
   one shadow map and point lights six (cube faces), sharing an atlas of 16 slots. Mesh Renderers can
   turn off **Cast Shadows** / **Receive Shadows**. Resolutions, distance, cascade splits, depth / normal
   bias and soft shadow quality are in **Edit → Project Settings** (saved in `ProjectSettings.json`).
-- **Mesh Renderer**: base color, metallic and smoothness, shaded with URP Lit's BRDF.
+- **Mesh Renderer**: a built-in cube or an imported **Model**, with base color, metallic and smoothness,
+  shaded with URP Lit's BRDF.
+- **Models**: `.obj` and glTF 2.0 (`.gltf` with embedded or external buffers, `.glb`) files in `Assets/` are
+  imported when used (and again when the file changes): all their meshes, placed by their nodes, become one
+  mesh. Missing normals are generated, smoothing edges under 60° like Unity. Materials, UVs, skins and
+  animations are ignored for now; FBX and compressed glTF (Draco, meshopt) are not supported. Drag a model
+  from the Project panel onto the Hierarchy to create an entity that draws it.
 - **Procedural Skybox** component: Unity's Skybox/Procedural (Rayleigh and Mie scattering), with the
   same settings and defaults (sun disk, sun size and convergence, atmosphere thickness, sky tint, ground
   color, exposure). The sky also gives the ambient light. Scenes without one use the defaults.

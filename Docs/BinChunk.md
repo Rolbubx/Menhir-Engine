@@ -40,7 +40,8 @@ A type and id pair is unique. Unknown chunk types are ignored by readers.
 3. Ambient light, computed by the editor (`SkyModel.Ambient`): `vec3` top, horizon, bottom.
 4. Entities: `u32` count, then per entity `i32` parent index (−1: root), `vec3` position,
    `vec4` rotation (quaternion x, y, z, w), `vec3` scale. Indices follow the scene file's order.
-5. Mesh renderers: `u32` count, then `u32` entity, `u32` mesh (`MESH` id), `vec4` color, `f32` metallic,
+5. Mesh renderers: `u32` count, then `u32` entity, `u32` mesh (`MESH` id), `vec3` mesh bounds min,
+   `vec3` mesh bounds max (local space, for shadow fitting), `vec4` color, `f32` metallic,
    `f32` smoothness, `bool` cast shadows, `bool` receive shadows.
 6. Lights: `u32` count, then `u32` entity, `u32` type (0 directional, 1 point, 2 spot), `vec3` color × intensity,
    `f32` range, `f32` spot angle (degrees), `u32` shadows (0 none, 1 hard, 2 soft), `f32` shadow strength.
@@ -65,7 +66,7 @@ A type and id pair is unique. Unknown chunk types are ignored by readers.
 The game computes the rest each frame, like the editor: world matrices, the sun and the lights,
 the camera, shadow cascades and slices, and what depends on the window's size.
 
-## `MESH` (id = 1 + `PrimitiveMesh`)
+## `MESH` (id = 1 + `PrimitiveMesh` for built-in meshes, from 1000 for imported models)
 
 `u32` vertex count, `u32` index count, then per vertex `vec3` position and `vec3` normal, then `u32`
 indices (triangles, counter-clockwise).

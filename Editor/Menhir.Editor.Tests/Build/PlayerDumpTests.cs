@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Numerics;
+using Menhir.Editor.Assets.Importers;
 using Menhir.Editor.Build;
 using Menhir.Editor.Lighting;
 using Menhir.Editor.Mathematics;
@@ -23,6 +24,22 @@ public sealed class PlayerDumpTests : IDisposable
     public PlayerDumpTests() => Directory.CreateDirectory(_directory);
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    private static readonly Guid StatueGuid = Guid.Parse("0c2d5b7e8f3a4c1d9e6b2a7f3c8d1e5a");
+
+    // A tall, off-center pyramid: its bounds are not the unit cube's.
+    private static readonly MeshData Statue = ObjImporter.Import("""
+        v 1 0 1
+        v 3 0 1
+        v 3 0 3
+        v 1 0 3
+        v 2 6 2
+        f 1 4 3 2
+        f 1 2 5
+        f 2 3 5
+        f 3 4 5
+        f 4 1 5
+        """);
 
     private static Scene TestScene()
     {
@@ -58,6 +75,11 @@ public sealed class PlayerDumpTests : IDisposable
         child.Transform.Position = new Vector3(1.5f, 0.5f, 0);
         child.Transform.Rotation = EulerAngles.ToQuaternion(new Vector3(10, 20, 30));
         child.Components.Add(new MeshRenderer());
+
+        Entity statue = scene.CreateEntity("Statue");
+        statue.Transform.Position = new Vector3(-4, 0, -3);
+        statue.Transform.Rotation = EulerAngles.ToQuaternion(new Vector3(0, 40, 0));
+        statue.Components.Add(new MeshRenderer { Model = StatueGuid });
         return scene;
     }
 
@@ -67,7 +89,7 @@ public sealed class PlayerDumpTests : IDisposable
         Assert.NotNull(engine);
         string data = Path.Combine(_directory, "GameData.binchunk");
         File.WriteAllBytes(data, GameDataExporter.Export("Test", [new BuildScene("Test", scene)], settings, new BuildSettings(),
-            _ => null, []));
+            _ => null, guid => guid == StatueGuid ? Statue : throw new IOException("no such model"), []));
         string mainC = Path.Combine(_directory, "main.c");
         File.WriteAllText(mainC, PlayerSource.Amalgamate(engine));
         string executable = Path.Combine(_directory, "player");
@@ -141,9 +163,10 @@ public sealed class PlayerDumpTests : IDisposable
         Bounds? casters = null;
         foreach (Entity entity in scene.Entities)
         {
-            if (entity.GetComponent<MeshRenderer>() is not { CastShadows: true })
+            if (entity.GetComponent<MeshRenderer>() is not { CastShadows: true } renderer)
                 continue;
-            Bounds bounds = Bounds.Transform(new Bounds(new Vector3(-0.5f), new Vector3(0.5f)), scene.GetWorldMatrix(entity));
+            Bounds local = renderer.Model != null ? Statue.Bounds : Primitives.CreateCube().Bounds;
+            Bounds bounds = Bounds.Transform(local, scene.GetWorldMatrix(entity));
             casters = casters?.Encapsulate(bounds) ?? bounds;
         }
 

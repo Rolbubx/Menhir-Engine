@@ -28,7 +28,7 @@ public class InspectablePropertiesTests
     {
         string[] names = InspectableProperties.Get(typeof(MeshRenderer)).Select(p => p.Name).ToArray();
 
-        Assert.Equal(["Mesh", "Color", "Metallic", "Smoothness", "CastShadows", "ReceiveShadows"], names);
+        Assert.Equal(["Mesh", "Model", "Color", "Metallic", "Smoothness", "CastShadows", "ReceiveShadows"], names);
     }
 
     [Theory]

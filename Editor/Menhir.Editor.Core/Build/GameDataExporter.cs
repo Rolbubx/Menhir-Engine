@@ -23,8 +23,13 @@ public static class GameDataExporter
 {
     public const int BokehKernelSize = 42;
 
+    /// <summary>First chunk id of imported models; built-in meshes use 1 + <see cref="PrimitiveMesh"/>.</summary>
+    public const uint FirstModelId = 1000;
+
+    /// <param name="loadTexture">A texture asset's image, or null when it cannot be loaded.</param>
+    /// <param name="loadModel">A model asset's mesh; throws (InvalidData, NotSupported, IO) when it cannot be imported.</param>
     public static byte[] Export(string title, IReadOnlyList<BuildScene> scenes, RenderingSettings rendering,
-        BuildSettings build, Func<Guid, ImageData?> loadTexture, List<string> warnings)
+        BuildSettings build, Func<Guid, ImageData?> loadTexture, Func<Guid, MeshData> loadModel, List<string> warnings)
     {
         if (scenes.Count == 0)
             throw new ArgumentException("A build needs at least one scene.", nameof(scenes));
@@ -32,13 +37,10 @@ public static class GameDataExporter
         var file = new BinChunkWriter();
         file.Add(BinChunk.Game, 0, GameChunk(title, scenes.Count, rendering, build));
 
-        var meshes = new HashSet<PrimitiveMesh>();
+        var meshes = new Meshes(file, loadModel);
         var textures = new Dictionary<object, uint>(); // FilmGrainType or texture Guid -> chunk id
         for (int i = 0; i < scenes.Count; i++)
             file.Add(BinChunk.Scene, (uint)i, SceneChunk(scenes[i], meshes, textures, file, loadTexture, warnings));
-
-        foreach (PrimitiveMesh mesh in meshes.Order())
-            file.Add(BinChunk.Mesh, MeshId(mesh), MeshChunk(mesh));
         return file.ToArray();
     }
 
@@ -68,7 +70,45 @@ public static class GameDataExporter
         return w.ToArray();
     }
 
-    private static byte[] SceneChunk(BuildScene buildScene, HashSet<PrimitiveMesh> meshes, Dictionary<object, uint> textures,
+    /// <summary>The meshes written so far (each once), by built-in mesh or model GUID.</summary>
+    private sealed class Meshes(BinChunkWriter file, Func<Guid, MeshData> loadModel)
+    {
+        private readonly Dictionary<object, (uint Id, Bounds Bounds)?> _written = new();
+
+        /// <summary>The chunk id and bounds of the renderer's mesh, or null (with the reason) when it has none.</summary>
+        public (uint Id, Bounds Bounds)? Get(MeshRenderer renderer, out string? error)
+        {
+            error = null;
+            object key = renderer.Model is { } guid ? guid : renderer.Mesh;
+            if (_written.TryGetValue(key, out var known))
+            {
+                if (known == null)
+                    error = "its model cannot be imported";
+                return known;
+            }
+
+            MeshData data;
+            uint id;
+            try
+            {
+                (data, id) = renderer.Model is { } model
+                    ? (loadModel(model), FirstModelId + (uint)_written.Keys.Count(k => k is Guid))
+                    : (Primitive(renderer.Mesh), MeshId(renderer.Mesh));
+            }
+            catch (Exception e) when (e is InvalidDataException or NotSupportedException or IOException
+                                          or UnauthorizedAccessException)
+            {
+                error = $"its model cannot be imported ({e.Message})";
+                _written[key] = null;
+                return null;
+            }
+            file.Add(BinChunk.Mesh, id, MeshChunk(data));
+            _written[key] = (id, data.Bounds);
+            return (id, data.Bounds);
+        }
+    }
+
+    private static byte[] SceneChunk(BuildScene buildScene, Meshes meshes, Dictionary<object, uint> textures,
         BinChunkWriter file, Func<Guid, ImageData?> loadTexture, List<string> warnings)
     {
         Scene scene = buildScene.Scene;
@@ -101,13 +141,21 @@ public static class GameDataExporter
             w.Vec3(entity.Transform.Scale);
         }
 
-        var renderers = Components<MeshRenderer>(entities);
-        w.U32((uint)renderers.Count);
-        foreach ((int entity, MeshRenderer renderer) in renderers)
+        var renderers = new List<(int Entity, MeshRenderer Renderer, uint Mesh, Bounds Bounds)>();
+        foreach ((int entity, MeshRenderer renderer) in Components<MeshRenderer>(entities))
         {
-            meshes.Add(renderer.Mesh);
+            if (meshes.Get(renderer, out string? error) is var (mesh, bounds))
+                renderers.Add((entity, renderer, mesh, bounds));
+            else
+                warnings.Add($"{buildScene.Name}: the Mesh Renderer of {entities[entity].Name} is left out: {error}.");
+        }
+        w.U32((uint)renderers.Count);
+        foreach ((int entity, MeshRenderer renderer, uint mesh, Bounds bounds) in renderers)
+        {
             w.U32((uint)entity);
-            w.U32(MeshId(renderer.Mesh));
+            w.U32(mesh);
+            w.Vec3(bounds.Min);
+            w.Vec3(bounds.Max);
             w.Vec4(renderer.Color);
             w.F32(renderer.Metallic);
             w.F32(renderer.Smoothness);
@@ -249,13 +297,14 @@ public static class GameDataExporter
                 w.F32(value);
     }
 
-    private static byte[] MeshChunk(PrimitiveMesh mesh)
+    private static MeshData Primitive(PrimitiveMesh mesh) => mesh switch
     {
-        MeshData data = mesh switch
-        {
-            PrimitiveMesh.Cube => Primitives.CreateCube(),
-            _ => throw new NotSupportedException($"No mesh data for {mesh}."),
-        };
+        PrimitiveMesh.Cube => Primitives.CreateCube(),
+        _ => throw new NotSupportedException($"No mesh data for {mesh}."),
+    };
+
+    private static byte[] MeshChunk(MeshData data)
+    {
         var w = new ChunkWriter();
         w.U32((uint)data.Positions.Length);
         w.U32((uint)data.Indices.Length);

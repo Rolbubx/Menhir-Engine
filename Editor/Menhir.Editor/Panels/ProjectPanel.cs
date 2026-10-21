@@ -16,7 +16,8 @@ namespace Menhir.Editor.Panels;
 /// </summary>
 public sealed class ProjectPanel : EditorPanel
 {
-    private const string AssetPayload = "MENHIR_ASSET";
+    /// <summary>Drag and drop payload of an asset: its GUID (16 bytes).</summary>
+    public const string AssetPayload = "MENHIR_ASSET";
     private const string DeletePopup = "Delete Asset?";
 
     private readonly EditorContext _context;
@@ -457,8 +458,8 @@ public sealed class ProjectPanel : EditorPanel
         if (!ImGui.BeginDragDropSource())
             return;
         _draggedPath = entry.Path;
-        byte unused = 0;
-        ImGui.SetDragDropPayload(AssetPayload, (IntPtr)(&unused), 1);
+        Guid guid = entry.Guid;
+        ImGui.SetDragDropPayload(AssetPayload, (IntPtr)(&guid), (uint)sizeof(Guid));
         ImGui.TextUnformatted(entry.Name);
         ImGui.EndDragDropSource();
     }

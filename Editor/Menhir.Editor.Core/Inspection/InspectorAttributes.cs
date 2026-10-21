@@ -34,6 +34,10 @@ public sealed class TrackballAttribute : Attribute;
 [AttributeUsage(AttributeTargets.Property)]
 public sealed class TextureAssetAttribute : Attribute;
 
+/// <summary>A <c>Guid?</c> property holding the GUID of a model asset (.obj, .gltf, .glb), picked from the project's models.</summary>
+[AttributeUsage(AttributeTargets.Property)]
+public sealed class ModelAssetAttribute : Attribute;
+
 /// <summary>Short help shown when hovering the property's label.</summary>
 [AttributeUsage(AttributeTargets.Property)]
 public sealed class TooltipAttribute(string text) : Attribute

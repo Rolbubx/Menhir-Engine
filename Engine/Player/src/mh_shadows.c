@@ -62,6 +62,13 @@ static mh_bounds mh_bounds_transform(mh_bounds local, mat4 m)
     return r;
 }
 
+/* The world box around a mesh renderer's mesh. */
+static mh_bounds mh_renderer_bounds(const mh_mesh_renderer *renderer, mat4 world)
+{
+    mh_bounds local = { 1, renderer->bounds_min, renderer->bounds_max };
+    return mh_bounds_transform(local, world);
+}
+
 static mh_bounds mh_bounds_encapsulate(mh_bounds a, mh_bounds b)
 {
     if (!a.valid)

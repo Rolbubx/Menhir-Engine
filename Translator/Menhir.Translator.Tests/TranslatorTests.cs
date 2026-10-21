@@ -3,7 +3,7 @@ using Menhir.Translator.TypeSystem;
 
 namespace Menhir.Translator.Tests;
 
-public sealed class TranslatorTests(NativeProgramFixture fixture) : IClassFixture<NativeProgramFixture>
+public sealed class TranslatorTests(NativeProgramFixture fixture)
 {
     [Theory]
     [InlineData(1.5, false, "1.5")]

@@ -2,11 +2,14 @@ using System.Diagnostics;
 using Menhir.Translator.CodeGen;
 using Menhir.Translator.TypeSystem;
 
+[assembly: AssemblyFixture(typeof(Menhir.Translator.Tests.NativeProgramFixture))]
+
 namespace Menhir.Translator.Tests;
 
 /// <summary>
 /// Translates TestPrograms.Menhir.dll to C and builds it once for all tests, and runs programs
-/// both natively and on .NET (TestPrograms.Dotnet, same sources).
+/// both natively and on .NET (TestPrograms.Dotnet, same sources). One instance is shared by the
+/// assembly's test classes, so they do not build the same executable at the same time.
 /// </summary>
 public sealed class NativeProgramFixture
 {

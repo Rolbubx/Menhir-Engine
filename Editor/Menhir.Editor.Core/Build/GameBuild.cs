@@ -54,8 +54,31 @@ public static class GameBuild
     /// The build settings' scenes, or every scene of the asset database (refreshed by the caller) with
     /// the open one first.
     /// </summary>
-    public static List<BuildScene> LoadScenes(Project project, string? openScenePath, string? openSceneJson, List<string> warnings)
+    public static List<BuildScene> LoadScenes(Project project, string? openScenePath, string? openSceneJson, List<string> warnings) =>
+        LoadScenes(project, openScenePath, openSceneJson, warnings, out _);
+
+    /// <summary>
+    /// The scenes of Play mode: the build's scenes, starting with the open one (added at the end
+    /// when the build settings leave it out, or when it was never saved), like Unity's Play button.
+    /// </summary>
+    public static List<BuildScene> LoadPlayScenes(Project project, string? openScenePath, string openSceneName,
+        string openSceneJson, List<string> warnings, out int firstScene)
     {
+        List<BuildScene> scenes = LoadScenes(project, openScenePath, openSceneJson, warnings, out List<string?> paths);
+        firstScene = openScenePath == null ? -1 : paths.IndexOf(openScenePath);
+        if (firstScene < 0)
+        {
+            var sceneWarnings = new List<string>();
+            scenes.Add(new BuildScene(openSceneName, SceneSerializer.Deserialize(openSceneJson, sceneWarnings)));
+            firstScene = scenes.Count - 1;
+        }
+        return scenes;
+    }
+
+    private static List<BuildScene> LoadScenes(Project project, string? openScenePath, string? openSceneJson, List<string> warnings,
+        out List<string?> loadedPaths)
+    {
+        loadedPaths = new List<string?>();
         List<string> paths = project.Settings.Build.Scenes.Count > 0
             ? project.Settings.Build.Scenes.ToList()
             : project.Assets.GetAllEntries()
@@ -92,6 +115,7 @@ public static class GameBuild
             }
             warnings.AddRange(sceneWarnings.Select(w => $"{path}: {w}"));
             scenes.Add(new BuildScene(Path.GetFileNameWithoutExtension(path), scene));
+            loadedPaths.Add(path);
         }
         return scenes;
     }

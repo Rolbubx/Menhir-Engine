@@ -4,7 +4,7 @@ namespace Menhir.Translator.Tests;
 /// Each test program must print exactly the same thing translated to C as it does on .NET.
 /// The programs are in Translator/TestPrograms/Programs.
 /// </summary>
-public sealed class DifferentialTests(NativeProgramFixture fixture) : IClassFixture<NativeProgramFixture>
+public sealed class DifferentialTests(NativeProgramFixture fixture)
 {
     [Theory]
     [InlineData("hello")]

@@ -4,6 +4,7 @@ using ImGuiNET;
 using Menhir.Editor.Assets;
 using Menhir.Editor.Logging;
 using Menhir.Editor.Projects;
+using Menhir.Editor.Scripting;
 using Menhir.Editor.UI;
 
 namespace Menhir.Editor.Panels;
@@ -409,6 +410,19 @@ public sealed class ProjectPanel : EditorPanel
                 }
             };
         }
+        if (ImGui.MenuItem($"{Icons.Script}  C# Script"))
+        {
+            string parent = _currentFolder;
+            _pendingChange = () =>
+            {
+                string path = ScriptTemplate.Create(Assets!, parent);
+                if (Assets!.FindByPath(path) is { } created)
+                {
+                    _context.SelectedAssetGuid = created.Guid;
+                    BeginRename(created);
+                }
+            };
+        }
     }
 
     /// <summary>Space below the list: click to deselect, right-click for the folder menu.</summary>
@@ -440,7 +454,8 @@ public sealed class ProjectPanel : EditorPanel
 
     private void HandleShortcuts()
     {
-        if (_renamingPath != null || !ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows))
+        // A change already asked for this frame (the Enter that ends a rename) is not also a shortcut.
+        if (_renamingPath != null || _pendingChange != null || !ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows))
             return;
         if (_context.SelectedAsset is not { } selected)
             return;
@@ -506,8 +521,14 @@ public sealed class ProjectPanel : EditorPanel
             string path = entry.Path;
             string name = _renameBuffer;
             _renamingPath = null;
-            if (name.Trim() != entry.Name)
-                _pendingChange = () => Assets!.Rename(path, name);
+            string oldName = entry.Name;
+            if (name.Trim() != oldName)
+                _pendingChange = () =>
+                {
+                    string renamed = Assets!.Rename(path, name);
+                    // A new script keeps its class in step with its file name.
+                    ScriptTemplate.RenameClass(Assets.ToAbsolutePath(renamed), oldName, AssetPaths.GetName(renamed));
+                };
         }
     }
 
@@ -553,6 +574,21 @@ public sealed class ProjectPanel : EditorPanel
             _pendingChange = () => Navigate(entry.Path);
         else if (IsScene(entry))
             _pendingChange = () => _openScene(entry);
+        else if (entry.Meta.Importer == AssetImporters.Script)
+            _pendingChange = () => OpenInEditor(entry);
+    }
+
+    /// <summary>Opens a script with the program the OS uses for .cs files.</summary>
+    private void OpenInEditor(AssetEntry entry)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(Assets!.ToAbsolutePath(entry.Path)) { UseShellExecute = true })?.Dispose();
+        }
+        catch (System.ComponentModel.Win32Exception e)
+        {
+            Log.Error($"Could not open {entry.Path}: {e.Message}");
+        }
     }
 
     private static bool IsScene(AssetEntry entry) => entry.Meta.Importer == AssetImporters.Scene;

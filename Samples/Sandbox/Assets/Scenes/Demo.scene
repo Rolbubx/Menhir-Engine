@@ -75,6 +75,13 @@
           "smoothness": 0.5,
           "castShadows": true,
           "receiveShadows": true
+        },
+        {
+          "type": "ScriptComponent",
+          "className": "Spinner",
+          "fields": {
+            "speed": 90
+          }
         }
       ]
     },
@@ -290,6 +297,11 @@
           "smoothness": 0.5,
           "castShadows": true,
           "receiveShadows": true
+        },
+        {
+          "type": "ScriptComponent",
+          "className": "Bobber",
+          "fields": {}
         }
       ]
     },

@@ -2,6 +2,7 @@ using System.Numerics;
 using ImGuiNET;
 using Menhir.Editor.Projects;
 using Menhir.Editor.Rendering;
+using Menhir.Editor.Scenes;
 using Menhir.Editor.UI;
 
 namespace Menhir.Editor.Panels;
@@ -23,6 +24,7 @@ public sealed class ViewportPanel : EditorPanel, IDisposable
     private readonly IRenderTarget _target;
     private readonly SceneRenderer _sceneRenderer;
     private readonly Action<bool> _setCursorCaptured;
+    private readonly Func<IReadOnlyList<Scene>?> _playScenes;
     private readonly EditorCamera _camera = new();
     private readonly ViewportOptions _options = new();
     private static readonly RenderingSettings DefaultRendering = new();
@@ -31,9 +33,12 @@ public sealed class ViewportPanel : EditorPanel, IDisposable
     private float _moveSpeed = 5f;
     private double _speedLabelUntil;
 
-    public ViewportPanel(EditorContext context, IRenderer renderer, Action<bool> setCursorCaptured)
+    /// <param name="playScenes">The running game's scenes, shown instead of the open one in Play mode (null in Edit mode).</param>
+    public ViewportPanel(EditorContext context, IRenderer renderer, Action<bool> setCursorCaptured,
+        Func<IReadOnlyList<Scene>?> playScenes)
     {
         _context = context;
+        _playScenes = playScenes;
         _setCursorCaptured = setCursorCaptured;
         _target = renderer.CreateRenderTarget(1, 1);
         _sceneRenderer = new SceneRenderer(renderer, ResolveAssetPath);
@@ -63,8 +68,12 @@ public sealed class ViewportPanel : EditorPanel, IDisposable
 
         Vector2 pixelScale = ImGui.GetIO().DisplayFramebufferScale;
         _target.Resize((int)(size.X * pixelScale.X), (int)(size.Y * pixelScale.Y));
-        _sceneRenderer.Render(_context.ActiveScene, _target, _camera.GetViewParams(size.X / size.Y), _options,
-            _context.Project?.Settings.Rendering ?? DefaultRendering, _context.SelectedEntityId);
+        RenderingSettings rendering = _context.Project?.Settings.Rendering ?? DefaultRendering;
+        if (_playScenes() is { } playing)
+            _sceneRenderer.Render(playing, _target, _camera.GetViewParams(size.X / size.Y), _options, rendering);
+        else
+            _sceneRenderer.Render(_context.ActiveScene, _target, _camera.GetViewParams(size.X / size.Y), _options, rendering,
+                _context.SelectedEntityId);
 
         // GL textures start at the bottom-left, ImGui images at the top-left: flip V.
         ImGui.Image(_target.ColorTexture, size, new Vector2(0, 1), new Vector2(1, 0));

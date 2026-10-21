@@ -28,9 +28,14 @@ public static class Icons
     public const string Project = "\ue247"; // folder-open
     public const string Console = "\ue185"; // terminal
     public const string Viewport = "\ue2fe"; // axis-3d
+    public const string Game = "\ue48a"; // monitor-play
 
     // Actions
     public const string Plus = "\ue141";
+    public const string Play = "\ue140";
+    public const string Pause = "\ue132";
+    public const string Stop = "\ue16b"; // square
+    public const string Step = "\ue3ee"; // step-forward
     public const string Search = "\ue155";
     public const string Close = "\ue1b2"; // x
     public const string Trash = "\ue18e";

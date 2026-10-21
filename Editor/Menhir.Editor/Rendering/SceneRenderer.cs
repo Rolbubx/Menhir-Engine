@@ -16,6 +16,9 @@ public sealed class ViewportOptions
     public bool PostProcessing { get; set; } = true;
     public bool Grid { get; set; } = true;
     public bool Shadows { get; set; } = true;
+
+    /// <summary>Linear color behind the scene when the skybox is hidden (null: the viewport's dark gray).</summary>
+    public Vector3? Background { get; set; }
 }
 
 /// <summary>Draws a <see cref="Scene"/> through an <see cref="IRenderer"/>.</summary>
@@ -43,13 +46,20 @@ public sealed class SceneRenderer : IDisposable
     /// <param name="settings">The project's pipeline settings (shadows).</param>
     /// <param name="selectedEntityId">Entity drawn with a selection outline, 0 for none.</param>
     public void Render(Scene scene, IRenderTarget target, in ViewParams view, ViewportOptions options,
+        RenderingSettings settings, long selectedEntityId = 0) =>
+        Render([scene], target, view, options, settings, selectedEntityId);
+
+    /// <summary>Draws several scenes together (Play mode with additive loads), lit by their combined environment.</summary>
+    /// <param name="selectedEntityId">Entity of the first scene drawn with a selection outline, 0 for none.</param>
+    public void Render(IReadOnlyList<Scene> scenes, IRenderTarget target, in ViewParams view, ViewportOptions options,
         RenderingSettings settings, long selectedEntityId = 0)
     {
-        SceneEnvironment environment = SceneEnvironment.Gather(scene);
+        SceneEnvironment environment = SceneEnvironment.Gather(scenes);
 
         var draws = new List<MeshDraw>();
         var casters = new List<MeshDraw>();
         Bounds? casterBounds = null;
+        foreach (Scene scene in scenes)
         foreach (Entity entity in scene.Entities)
         {
             if (entity.GetComponent<MeshRenderer>() is not { } meshRenderer || GetMesh(meshRenderer) is not var (mesh, meshBounds))
@@ -75,7 +85,7 @@ public sealed class SceneRenderer : IDisposable
                 casters);
         }
 
-        _renderer.BeginFrame(target, view, environment, ClearColor);
+        _renderer.BeginFrame(target, view, environment, options.Background ?? ClearColor);
         if (options.Skybox)
             _renderer.DrawSkybox(environment.Sky);
         foreach (MeshDraw draw in draws)
@@ -88,9 +98,9 @@ public sealed class SceneRenderer : IDisposable
         ITexture? lookup = stack.ColorLookup?.Texture is { } guid ? GetTexture(guid) : null;
         _renderer.PostProcess(stack, lookup);
 
-        if (scene.Find(selectedEntityId) is { } selected && selected.GetComponent<MeshRenderer>() is { } selectedRenderer &&
+        if (selectedEntityId != 0 && scenes.Count > 0 && scenes[0].Find(selectedEntityId) is { } selected && selected.GetComponent<MeshRenderer>() is { } selectedRenderer &&
             GetMesh(selectedRenderer) is var (selectedMesh, _))
-            _renderer.DrawOutline(selectedMesh, scene.GetWorldMatrix(selected), SelectionColor);
+            _renderer.DrawOutline(selectedMesh, scenes[0].GetWorldMatrix(selected), SelectionColor);
         _renderer.EndFrame();
     }
 

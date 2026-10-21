@@ -6,6 +6,9 @@ using Menhir.Editor.Rendering;
 using Menhir.Editor.Rendering.OpenGL;
 using Menhir.Editor.Assets;
 using Menhir.Editor.Building;
+using Menhir.Editor.Inspector;
+using Menhir.Editor.Playing;
+using Menhir.Editor.Scripting;
 using Menhir.Editor.Commands;
 using Menhir.Editor.Logging;
 using Menhir.Editor.UI;
@@ -35,6 +38,10 @@ public sealed class EditorApplication : IDisposable
     private readonly SaveSceneDialog _saveSceneDialog;
     private readonly ProjectHub _hub;
     private readonly BuildRunner _build;
+    private readonly ScriptManager _scripts = new();
+    private readonly PlayMode _play;
+    private GamePanel? _gamePanel;
+    private bool _wasPlaying;
 
     private GL? _gl;
     private IInputContext? _input;
@@ -63,6 +70,8 @@ public sealed class EditorApplication : IDisposable
         _preferences = EditorPreferences.Load(EditorPaths.PreferencesFile);
         _saveSceneDialog = new SaveSceneDialog(_context);
         _build = new BuildRunner(_context);
+        _play = new PlayMode(_context, _scripts);
+        _scripts.Reloaded += ScriptDrawer.ClearCache;
         _statusBar = new StatusBar(Log.Messages, ShowConsole);
         _hub = new ProjectHub(_preferences, OpenProject, ProjectLocator.FindSample());
         OpenStartupProject(args);
@@ -118,7 +127,9 @@ public sealed class EditorApplication : IDisposable
         Log.Info($"Opened project {project.RootPath}");
         if (project.Settings.Remote is { } remote)
             Log.Warning($"This project has a remote ({remote.Url}), but remote collaboration is not available yet: it is opened as a local project.");
+        _play.Stop();
         _context.OpenProject(project);
+        _scripts.OpenProject(project);
         _preferences.AddRecentProject(project.RootPath);
         _preferences.Save(EditorPaths.PreferencesFile);
     }
@@ -179,11 +190,13 @@ public sealed class EditorApplication : IDisposable
         Log.Info($"OpenGL {_gl.GetStringS(StringName.Version)} — {_gl.GetStringS(StringName.Renderer)}");
 
         _renderer = new GLRenderer(_gl);
+        _gamePanel = new GamePanel(_context, _play, _renderer, _input, SetCursorCaptured);
         _panels =
         [
-            new ViewportPanel(_context, _renderer, SetCursorCaptured),
+            new ViewportPanel(_context, _renderer, SetCursorCaptured, () => _play.Scenes),
+            _gamePanel,
             new HierarchyPanel(_context),
-            new InspectorPanel(_context),
+            new InspectorPanel(_context, _scripts),
             new ProjectPanel(_context, OpenSceneAsset) { GridView = _preferences.ProjectGridView },
             new ConsolePanel(Log.Messages, _preferences.ConsoleFilter),
             new ProjectSettingsPanel(_context),
@@ -258,6 +271,13 @@ public sealed class EditorApplication : IDisposable
             return;
         }
 
+        // The game's frame runs before the editor's panels draw it.
+        _scripts.Update();
+        _play.Update(_gamePanel!.ReadInput(), (float)deltaTime);
+        if (_play.IsPlaying && !_wasPlaying)
+            _gamePanel.Focus();
+        _wasPlaying = _play.IsPlaying;
+
         DrawMainMenuBar();
         _dockspace.Draw(bottomMargin: StatusBar.Height);
         _statusBar.Draw();
@@ -299,7 +319,14 @@ public sealed class EditorApplication : IDisposable
 
     private void DrawMainMenuBar()
     {
-        if (!ImGui.BeginMainMenuBar())
+        // Tinted in Play mode, like Unity, so edits made while playing are not mistaken for the game's.
+        bool tinted = _play.IsPlaying;
+        if (tinted)
+            ImGui.PushStyleColor(ImGuiCol.MenuBarBg, EditorTheme.PlayModeTint);
+        bool menuBar = ImGui.BeginMainMenuBar();
+        if (tinted)
+            ImGui.PopStyleColor();
+        if (!menuBar)
             return;
 
         if (ImGui.BeginMenu("File"))
@@ -339,7 +366,51 @@ public sealed class EditorApplication : IDisposable
             ImGui.EndMenu();
         }
 
+        DrawPlayButtons();
         ImGui.EndMainMenuBar();
+    }
+
+    /// <summary>Play, Pause and Step, in the middle of the menu bar.</summary>
+    private void DrawPlayButtons()
+    {
+        float button = ImGui.GetFrameHeight() + 6;
+        float spacing = ImGui.GetStyle().ItemSpacing.X;
+        float width = button * 3 + spacing * 2;
+        float x = (ImGui.GetWindowWidth() - width) / 2;
+        if (x < ImGui.GetCursorPosX())
+            return; // no room left of the menus
+        ImGui.SetCursorPosX(x);
+
+        bool playing = _play.IsPlaying || _play.IsWaitingForScripts;
+        if (PlayButton(playing ? Icons.Stop : Icons.Play, playing, button, "##play"))
+            _play.TogglePlay();
+        Tooltip(playing ? "Stop (Ctrl+P)" : _scripts.IsCompiling ? "Play (once the scripts are compiled) (Ctrl+P)" : "Play (Ctrl+P)");
+        ImGui.SameLine();
+        ImGui.BeginDisabled(!_play.IsPlaying);
+        if (PlayButton(Icons.Pause, _play.IsPaused, button, "##pause"))
+            _play.IsPaused = !_play.IsPaused;
+        Tooltip("Pause (Ctrl+Shift+P)");
+        ImGui.SameLine();
+        if (PlayButton(Icons.Step, false, button, "##step"))
+            _play.Step();
+        Tooltip("Step one frame");
+        ImGui.EndDisabled();
+    }
+
+    private static bool PlayButton(string icon, bool active, float width, string id)
+    {
+        if (active)
+            ImGui.PushStyleColor(ImGuiCol.Button, EditorTheme.Accent);
+        bool clicked = ImGui.Button(icon + id, new System.Numerics.Vector2(width, 0));
+        if (active)
+            ImGui.PopStyleColor();
+        return clicked;
+    }
+
+    private static void Tooltip(string text)
+    {
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(text);
     }
 
     private void DrawFileMenu()
@@ -433,6 +504,10 @@ public sealed class EditorApplication : IDisposable
             _build.Start(run: false);
         else if (EditorInput.Shortcut(ImGuiKey.B, shift: true))
             _build.Start(run: true);
+        else if (EditorInput.Shortcut(ImGuiKey.P))
+            _play.TogglePlay();
+        else if (EditorInput.Shortcut(ImGuiKey.P, shift: true) && _play.IsPlaying)
+            _play.IsPaused = !_play.IsPaused;
     }
 
     private void OnClosing()
@@ -459,8 +534,10 @@ public sealed class EditorApplication : IDisposable
 
         // GPU resources and the ImGui context (whose destruction writes layout.ini)
         // must go while the GL context is still alive.
+        _play.Dispose();
         foreach (IDisposable disposable in _panels.OfType<IDisposable>())
             disposable.Dispose();
+        _scripts.Dispose();
         _renderer?.Dispose();
         _renderer = null;
         _imgui?.Dispose();

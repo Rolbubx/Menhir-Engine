@@ -25,6 +25,7 @@ public static class EditorTheme
     public static readonly Vector4 TextDim = Rgb(0x8A, 0x8A, 0x8A);
     public static readonly Vector4 Warning = Rgb(0xF2, 0xC1, 0x4A);
     public static readonly Vector4 Error = Rgb(0xF0, 0x5A, 0x4F);
+    public static readonly Vector4 PlayModeTint = Rgb(0x2E, 0x3D, 0x52); // menu bar in Play mode
 
     public static void Apply()
     {

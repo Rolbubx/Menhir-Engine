@@ -8,6 +8,7 @@ using Menhir.Editor.Inspection;
 using Menhir.Editor.Mathematics;
 using Menhir.Editor.PostProcessing;
 using Menhir.Editor.Scenes;
+using Menhir.Editor.Scripting;
 using Menhir.Editor.UI;
 
 namespace Menhir.Editor.Panels;
@@ -19,6 +20,7 @@ namespace Menhir.Editor.Panels;
 public sealed class InspectorPanel : EditorPanel
 {
     private readonly EditorContext _context;
+    private readonly ScriptManager _scripts;
 
     // Scene changes from menus are applied after the components are drawn, so the list is not
     // modified while it is being iterated.
@@ -37,9 +39,10 @@ public sealed class InspectorPanel : EditorPanel
     private Quaternion _eulerSource;
     private Vector3 _euler;
 
-    public InspectorPanel(EditorContext context)
+    public InspectorPanel(EditorContext context, ScriptManager scripts)
     {
         _context = context;
+        _scripts = scripts;
     }
 
     public override string Title => "Inspector";
@@ -82,6 +85,14 @@ public sealed class InspectorPanel : EditorPanel
                                       "Its data is kept and saved back unchanged.");
                     ImGui.PopStyleColor();
                 }
+            }
+            else if (component is ScriptComponent script)
+            {
+                Type? scriptType = _scripts.Current?.Find(script.ClassName);
+                bool notFound = scriptType == null && !_scripts.IsCompiling;
+                if (ComponentHeader.Draw("component", Icons.Script, notFound ? EditorTheme.Warning : EditorTheme.Text,
+                        ScriptDrawer.Title(script) + (notFound ? " (Missing)" : " (Script)"), "##componentMenu"))
+                    ScriptDrawer.Draw(script, scriptType, _scripts.IsCompiling, _context.Execute);
             }
             else
             {
@@ -144,6 +155,7 @@ public sealed class InspectorPanel : EditorPanel
 
         // Grouped by category (Rendering, Post-processing, then the rest), like Unity's menu.
         var groups = ComponentTypes.All
+            .Where(t => t != typeof(ScriptComponent))
             .Where(t => InspectableProperties.NicifyName(t.Name).Contains(_componentSearch.Trim(), StringComparison.OrdinalIgnoreCase))
             .GroupBy(t => t.GetCustomAttribute<ComponentCategoryAttribute>()?.Name ?? "Other")
             .OrderBy(g => g.Key switch { "Rendering" => 0, "Post-processing" => 1, _ => 2 })
@@ -158,6 +170,7 @@ public sealed class InspectorPanel : EditorPanel
             foreach (Type type in group.OrderBy(t => t.Name, StringComparer.Ordinal))
                 DrawAddComponentItem(entity, type);
         }
+        any |= DrawAddScriptItems(entity);
         if (!any)
             ImGui.TextDisabled("No component matches.");
         ImGui.EndPopup();
@@ -173,6 +186,36 @@ public sealed class InspectorPanel : EditorPanel
             Component component = ComponentTypes.Create(ComponentTypes.GetName(type))!;
             _pendingChange = () => _context.Execute(new AddComponentCommand(entity, component));
         }
+    }
+
+    /// <summary>The project's script classes (Project > Create > C# Script makes one).</summary>
+    private bool DrawAddScriptItems(Entity entity)
+    {
+        string search = _componentSearch.Trim();
+        List<Type> types = (_scripts.Current?.ScriptTypes ?? [])
+            .Where(t => InspectableProperties.NicifyName(t.Name).Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                        t.FullName!.Contains(search, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (types.Count == 0 && (search.Length > 0 || !_scripts.IsCompiling))
+            return false;
+
+        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.TextDim);
+        ImGui.SeparatorText("Scripts");
+        ImGui.PopStyleColor();
+        if (types.Count == 0)
+            ImGui.TextDisabled("Compiling the scripts...");
+        foreach (Type type in types)
+        {
+            string className = type.FullName!;
+            bool present = entity.Components.OfType<ScriptComponent>().Any(c => c.ClassName == className);
+            string label = InspectableProperties.NicifyName(type.Name) + (type.Namespace != null ? $"  ({type.Namespace})" : "");
+            if (ImGui.Selectable($"{Icons.Script}  {label}", false, present ? ImGuiSelectableFlags.Disabled : ImGuiSelectableFlags.None))
+            {
+                var component = new ScriptComponent { ClassName = className };
+                _pendingChange = () => _context.Execute(new AddComponentCommand(entity, component));
+            }
+        }
+        return true;
     }
 
     private static void DrawAsset(AssetEntry asset)

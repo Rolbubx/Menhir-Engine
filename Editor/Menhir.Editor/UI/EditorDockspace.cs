@@ -5,7 +5,7 @@ namespace Menhir.Editor.UI;
 
 /// <summary>
 /// Full-window dockspace hosting every editor panel. Builds the default layout
-/// (hierarchy left, inspector right, project + console bottom, viewport center)
+/// (hierarchy left, inspector right, project + console bottom, viewport and game center)
 /// on first run or when a reset is requested; otherwise ImGui restores the
 /// layout saved in layout.ini.
 /// </summary>
@@ -17,7 +17,7 @@ public sealed class EditorDockspace
     /// Bump when panel window IDs change, so a layout.ini saved by an older editor
     /// (which would leave the panels floating) is replaced by the default layout.
     /// </summary>
-    public const int LayoutVersion = 2;
+    public const int LayoutVersion = 3;
 
     private bool _resetRequested;
 
@@ -71,6 +71,7 @@ public sealed class EditorDockspace
         DockBuilder.DockWindow("###Inspector", right);
         DockBuilder.DockWindow("###Project", bottom);
         DockBuilder.DockWindow("###Console", bottom);
+        DockBuilder.DockWindow("###Game", center);
         DockBuilder.DockWindow("###Viewport", center);
         DockBuilder.Finish(dockspaceId);
     }

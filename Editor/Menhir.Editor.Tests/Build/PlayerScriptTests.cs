@@ -234,6 +234,170 @@ public sealed class PlayerScriptTests : IDisposable
             Assert.True(Same(editor[i], native[i]), $"Line {i}: Play mode printed\n  {editor[i]}\nthe game printed\n  {native[i]}");
     }
 
+    // ---- The simple syntax, objects, tweens, timers, coroutines and physics -------------------------
+
+    private const string Spinner = """
+        MH_CREATE Spinner.c
+
+        MH_VARS {
+            float speed = 90;           // MH_RANGE(0, 360) Degrees per second
+            MH_VEC3 axis = MH_VEC3(0, 1, 0);
+            MH_STRING title = "spinner";
+            int lives = 3;
+            MH_GAMEOBJECT player;
+            int ticks;                  // MH_HIDE
+            int steps;                  // MH_HIDE
+            float glow = 0.5f;          // MH_HIDE
+        };
+
+        MH_TIMER(tick) { self.ticks++; }
+
+        MH_TIMER(turned)
+        {
+            mh_vec3 e = mh_quat_to_euler(mh_get_rotation(MH_PARENT));
+            MH_LOG("turned to %.1f on frame %d", e.y, mh_frame_count());
+            MH_MOVE(MH_PARENT, MH_VEC3(0, 0, -2), 0.3f, MH_TWEEN_TYPE(MH_EASE_OUT));
+        }
+
+        MH_COROUTINE(sequence)
+        {
+            MH_LOG("sequence begins, glow %.2f", self.glow);
+            MH_WAIT(0.25f);
+            MH_LOG("sequence waited, ticks %d", self.ticks);
+            MH_WAIT_FRAME();
+            MH_GAMEOBJECT copy = MH_SPAWN(MH_SCENE.Crate, MH_VEC3(3, 5, 0));
+            MH_LOG("spawned %s with %d child, lid %s", MH_NAME(copy), MH_CHILD_COUNT(copy), MH_NAME(MH_FIND_CHILD(copy, "Lid")));
+            MH_WAIT(0.1f);
+            MH_SET_ACTIVE(MH_SCENE.Lamp, false);
+            MH_DESTROY(MH_SCENE.Old_Crate);
+            MH_LOG("lamp active %d, missing %d", MH_IS_ACTIVE(MH_SCENE.Lamp), MH_IS_NULL(MH_SCENE.Nothing_Here));
+            MH_WAIT_UNTIL(MH_IS_NULL(MH_SCENE.Old_Crate));
+            MH_LOG("old crate gone on frame %d", mh_frame_count());
+        }
+
+        MH_START()
+        {
+            MH_GAMEOBJECT player = MH_PARENT;
+            MH_REFERENCE *pplayer = &player;
+            self.player = player;
+            MH_LOG("start %s %s speed %.0f lives %d axis %.0f %.0f %.0f", MH_NAME(pplayer), self.title, self.speed, self.lives,
+                   self.axis.x, self.axis.y, self.axis.z);
+            MH_TWEEN turn = MH_ROTATE(pplayer, MH_VEC3(0, 90, 0), 0.5f, MH_TWEEN_TYPE(MH_LINEAR));
+            MH_ON_COMPLETE(turn, turned);
+            MH_EVERY(0.1f, tick);
+            MH_START_COROUTINE(sequence);
+        }
+
+        MH_FIXED_UPDATE(dt)
+        {
+            self.steps++;
+            (void)dt;
+        }
+
+        MH_UPDATE()
+        {
+            MH_SPIN(MH_SCENE.Lamp, MH_VEC3(0, self.speed, 0));
+            if (MH_KEY_DOWN("space"))
+                MH_LOG("space: %d steps, %d ticks", self.steps, self.ticks);
+        }
+
+        MH_ON_GAME_CLOSE(t)
+        {
+            MH_LOG("closing after %.2f s and %d fixed steps", t, self.steps);
+        }
+        """;
+
+    private const string Ball = """
+        MH_VARS {
+            int bounces;
+        };
+
+        MH_ON_COLLISION_ENTER(other)
+        {
+            self.bounces++;
+            if (self.bounces <= 3)
+                MH_LOG("%s hits %s (%d) at %.2f", MH_NAME(MH_PARENT), MH_NAME(other), self.bounces, MH_GET_POSITION(MH_PARENT).y);
+        }
+
+        MH_ON_TRIGGER_ENTER(other) { MH_LOG("%s enters %s", MH_NAME(MH_PARENT), MH_NAME(other)); }
+        MH_ON_TRIGGER_EXIT(other) { MH_LOG("%s leaves %s", MH_NAME(MH_PARENT), MH_NAME(other)); }
+
+        MH_UPDATE()
+        {
+            MH_HIT hit;
+            if (mh_frame_count() == 30 && MH_RAYCAST(MH_VEC3(0, 10, 0), MH_VEC3(0, -1, 0), 50, &hit))
+                MH_LOG("ray hits %s at %.2f", MH_NAME(hit.entity), hit.distance);
+        }
+
+        MH_ON_DESTROY() { MH_LOG("%s destroyed", MH_NAME(MH_PARENT)); }
+        """;
+
+    private const string ArcadeInput = """
+        frame 0.02 40
+        dump
+        frame 0.016 25
+        down 32
+        frame 0.016
+        up 32
+        dump
+        """;
+
+    private static Scene ArcadeScene()
+    {
+        var scene = new Scene();
+        Entity Add(string name, Vector3 position, params Component[] components)
+        {
+            Entity e = scene.CreateEntity(name);
+            e.Transform.Position = position;
+            e.Components.AddRange(components);
+            return e;
+        }
+        ScriptComponent Script(string name, Dictionary<string, JsonElement>? fields = null) => new() { ScriptName = name, Fields = fields ?? new() };
+
+        Add("Player", Vector3.Zero, Script("Spinner", new() { ["lives"] = J(5) }));
+        Add("Floor", Vector3.Zero, Script("BoxCollider", new() { ["size"] = J(new[] { 10f, 1f, 10f }) }));
+        Add("Ball", new Vector3(0, 3, 0), Script("SphereCollider"), Script("Rigidbody", new() { ["bounciness"] = J(0.5f) }), Script("Ball"));
+        Add("Zone", new Vector3(0, 1.75f, 0), Script("BoxCollider", new() { ["size"] = J(new[] { 2f, 0.5f, 2f }), ["is_trigger"] = J(true) }));
+        Entity crate = Add("Crate", new Vector3(-3, 0, 0));
+        scene.CreateEntity("Lid", crate.LocalId).Transform.Position = new Vector3(0, 1, 0);
+        Add("Lamp", new Vector3(0, 4, 0));
+        Add("Old Crate", new Vector3(5, 0, 0), Script("Ball"));
+        return scene;
+    }
+
+    [Fact]
+    public void SimpleScripts_Physics_Tweens_AndObjects_RunTheSameInBoth()
+    {
+        Project project = Project.Create(_root, "Arcade");
+        string scripts = Path.Combine(project.Assets.AssetsDirectory, "Scripts");
+        Directory.CreateDirectory(scripts);
+        File.WriteAllText(Path.Combine(scripts, "Spinner.c"), Spinner);
+        File.WriteAllText(Path.Combine(scripts, "Ball.c"), Ball);
+        BuildScene[] scenes = [new("Arcade", ArcadeScene())];
+
+        List<string> native = Native(project, scenes, ArcadeInput);
+        List<string> editor = Editor(project, scenes, ArcadeInput);
+
+        string Show(List<string> lines) => string.Join("\n", lines);
+        Assert.Contains("log 0 start Player spinner speed 90 lives 5 axis 0 1 0", native);
+        Assert.Contains("log 0 sequence begins, glow 0.50", native);
+        Assert.Contains(native, l => l.StartsWith("log 0 turned to 90.0 on frame", StringComparison.Ordinal));
+        Assert.Contains("log 0 spawned Crate with 1 child, lid Lid", native);
+        Assert.Contains("log 0 lamp active 0, missing 1", native);
+        Assert.Contains("log 0 Old Crate destroyed", native);
+        Assert.Contains(native, l => l.StartsWith("log 0 old crate gone on frame", StringComparison.Ordinal));
+        Assert.Contains(native, l => l.StartsWith("log 0 Ball hits Floor (1)", StringComparison.Ordinal));
+        Assert.Contains("log 0 Ball enters Zone", native);
+        Assert.Contains("log 0 Ball leaves Zone", native);
+        Assert.Contains(native, l => l.StartsWith("log 0 ray hits Ball", StringComparison.Ordinal));
+        Assert.Contains(native, l => l.StartsWith("log 0 space: ", StringComparison.Ordinal));
+        Assert.Contains(native, l => l.StartsWith("log 0 closing after ", StringComparison.Ordinal));
+        Assert.Contains("log 0 Ball destroyed", native);
+        Assert.True(native.Count == editor.Count, $"The game printed:\n{Show(native)}\n\nPlay mode printed:\n{Show(editor)}");
+        for (int i = 0; i < native.Count; i++)
+            Assert.True(Same(editor[i], native[i]), $"Line {i}: Play mode printed\n  {editor[i]}\nthe game printed\n  {native[i]}\n\n{Show(native)}");
+    }
+
     [Fact]
     public void Library_DescribesTheScriptsFields()
     {
@@ -242,7 +406,8 @@ public sealed class PlayerScriptTests : IDisposable
         Assert.True(compiled.Success, string.Join("\n", compiled.Diagnostics));
         IReadOnlyList<ScriptType> types = ScriptLibrary.ReadTypes(compiled.LibraryPath!);
 
-        Assert.Equal(["Bare", "Dice", "Follower", "Mover", "Spawned"], types.Select(t => t.Name));
+        Assert.Equal(["AudioSource", "Bare", "BoxCollider", "Dice", "Follower", "Mover", "Rigidbody", "Spawned", "SphereCollider"],
+            types.Select(t => t.Name));
         ScriptType mover = types.Single(t => t.Name == "Mover");
         Assert.Equal(["count", "speed", "active", "label", "mode", "offset", "direction", "tint", "broken"], mover.Fields.Select(f => f.Name));
         ScriptField speed = mover.Fields[1];
@@ -290,7 +455,7 @@ public sealed class PlayerScriptTests : IDisposable
         return true;
     }
 
-    private List<string> Native(Project project, BuildScene[] scenes)
+    private List<string> Native(Project project, BuildScene[] scenes, string inputScript = Input)
     {
         string data = Path.Combine(_root, "GameData.binchunk");
         var warnings = new List<string>();
@@ -300,9 +465,11 @@ public sealed class PlayerScriptTests : IDisposable
         string mainC = Path.Combine(_root, "main.c");
         File.WriteAllText(mainC, PlayerSource.Amalgamate(Engine));
         string executable = Path.Combine(_root, "player");
-        new PlayerBuilder(Engine).BuildHeadless(mainC, executable, [.. ScriptCompiler.ScriptFiles(project), ScriptCompiler.ApiSource(Engine)]);
+        (List<string> scripts, List<ScriptDiagnostic> prepared) = ScriptCompiler.PrepareSources(project, Path.Combine(_root, "Generated"));
+        Assert.Empty(prepared);
+        new PlayerBuilder(Engine).BuildHeadless(mainC, executable, [.. scripts, .. ScriptCompiler.ApiSources(Engine)]);
         string input = Path.Combine(_root, "input.txt");
-        File.WriteAllText(input, Input);
+        File.WriteAllText(input, inputScript);
 
         var start = new ProcessStartInfo(executable) { RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (string argument in new[] { "--data", data, "--simulate", input })
@@ -316,9 +483,10 @@ public sealed class PlayerScriptTests : IDisposable
     }
 
     /// <summary>The same input played in the editor's Play mode, printed like the player's --simulate.</summary>
-    private List<string> Editor(Project project, BuildScene[] scenes)
+    private List<string> Editor(Project project, BuildScene[] scenes, string inputScript = Input)
     {
-        ScriptCompileResult compiled = ScriptCompiler.CompileLibrary(project, Engine, Path.Combine(_root, "Library", "GameScripts" + ScriptCompiler.LibraryExtension));
+        ScriptCompileResult compiled = ScriptCompiler.CompileLibrary(project, Engine, Path.Combine(_root, "Library", "GameScripts" + ScriptCompiler.LibraryExtension),
+            noAudio: true);
         Assert.True(compiled.Success, string.Join("\n", compiled.Diagnostics));
         using ScriptLibrary library = ScriptLibrary.Load(compiled.LibraryPath!);
 
@@ -328,7 +496,7 @@ public sealed class PlayerScriptTests : IDisposable
         var frame = new InputFrame();
         string F(float v) => v.ToString("R", CultureInfo.InvariantCulture);
 
-        foreach (string raw in Input.Split('\n'))
+        foreach (string raw in inputScript.Split('\n'))
         {
             string[] p = raw.Split('#')[0].Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (p.Length == 0)

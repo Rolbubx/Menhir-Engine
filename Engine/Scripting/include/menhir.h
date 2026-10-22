@@ -66,6 +66,14 @@ extern "C" {
 #define MH_START(fn) .start = (mh_callback)(fn)
 #define MH_UPDATE(fn) .update = (mh_callback)(fn)
 #define MH_LATE_UPDATE(fn) .late_update = (mh_callback)(fn)
+#define MH_FIXED_UPDATE(fn) .fixed_update = (mh_callback)(fn)
+#define MH_ON_DESTROY(fn) .on_destroy = (mh_callback)(fn)
+#define MH_ON_GAME_CLOSE(fn) .on_game_close = (mh_callback)(fn)
+/* These take T *self, the entity and the other entity. */
+#define MH_ON_COLLISION_ENTER(fn) .on_collision_enter = (mh_contact_callback)(fn)
+#define MH_ON_COLLISION_EXIT(fn) .on_collision_exit = (mh_contact_callback)(fn)
+#define MH_ON_TRIGGER_ENTER(fn) .on_trigger_enter = (mh_contact_callback)(fn)
+#define MH_ON_TRIGGER_EXIT(fn) .on_trigger_exit = (mh_contact_callback)(fn)
 
 /* Declares the script T (a struct type); its name in the editor is T. */
 #define MH_SCRIPT(T, ...)                                                                      \
@@ -79,6 +87,11 @@ void mh_register_script(const mh_script_type *type);
 
 /* For the engine: menhir_script.c is compiled with the scripts. */
 MH_EXPORT void mh_bind(const mh_api *api);
+/* Each frame after the scripts' Update (timers, coroutines, tweens, audio), each fixed step after
+   their FixedUpdate (physics), and once when the game ends. */
+MH_EXPORT void mh_runtime_update(void);
+MH_EXPORT void mh_runtime_fixed_step(void);
+MH_EXPORT void mh_runtime_shutdown(void);
 MH_EXPORT int32_t mh_script_type_count(void);
 MH_EXPORT const mh_script_type *mh_script_type_at(int32_t index);
 /* sizeof mh_field, mh_script_type and mh_api: the engine checks them against its copies. */
@@ -251,6 +264,132 @@ void mh_random_seed(uint32_t seed);
 float mh_random_value(void);                 /* 0 to 1 */
 float mh_random_range(float min, float max); /* min to max */
 int32_t mh_random_int(int32_t min, int32_t max); /* min included, max excluded */
+
+/* ---- Objects: creating, destroying, activating, the hierarchy -------------------------------- */
+
+bool mh_is_alive(mh_entity entity);   /* not destroyed, and its scene still loaded */
+/* A copy of the entity with its children and components (MH_NONE parent: a root of its scene). */
+mh_entity mh_instantiate(mh_entity entity, mh_entity parent);
+/* A copy at a position of the world. */
+mh_entity mh_spawn(mh_entity entity, mh_vec3 position);
+/* At the end of the frame, with its children. */
+void mh_destroy(mh_entity entity);
+void mh_set_active(mh_entity entity, bool active);
+bool mh_is_active(mh_entity entity);      /* it and its parents are active */
+bool mh_is_active_self(mh_entity entity); /* its own setting */
+int32_t mh_child_count(mh_entity entity);
+mh_entity mh_get_child(mh_entity entity, int32_t index);
+/* The first child with that name (direct children), or MH_NONE. */
+mh_entity mh_find_child(mh_entity entity, const char *name);
+void mh_set_parent(mh_entity entity, mh_entity parent);
+/* Its index-th script (any type), or NULL; *type (when not NULL) gets the script's type. */
+void *mh_get_script_at(mh_entity entity, int32_t index, const mh_script_type **type);
+/* The camera the game renders with. */
+mh_entity mh_main_camera(void);
+/* The full path of a file of the Assets folder: "Sounds/jump.wav". */
+const char *mh_asset_path(const char *relative);
+/* The world scale (through the parents; ignores their rotation). */
+mh_vec3 mh_get_lossy_scale(mh_entity entity);
+float mh_fixed_delta_time(void);
+
+/* ---- Tweens: moving, turning, scaling over time ------------------------------------------------ */
+
+enum {
+    MH_LINEAR, MH_EASE_IN, MH_EASE_OUT, MH_EASE_IN_OUT, MH_BACK_IN, MH_BACK_OUT, MH_ELASTIC, MH_BOUNCE,
+};
+/* The easing curve at t (0 to 1). */
+float mh_ease(int32_t ease, float t);
+
+/* A running tween, 0 for none. Tweens stop by themselves when their entity is destroyed. */
+typedef int32_t mh_tween;
+/* By an offset, by Euler angles (degrees, around its own axes; 360 makes a full turn), or by a factor. */
+mh_tween mh_tween_move(mh_entity entity, mh_vec3 offset, float duration, int32_t ease);
+mh_tween mh_tween_rotate(mh_entity entity, mh_vec3 degrees, float duration, int32_t ease);
+mh_tween mh_tween_scale(mh_entity entity, mh_vec3 factor, float duration, int32_t ease);
+/* To a local position, local Euler angles or local scale. */
+mh_tween mh_tween_move_to(mh_entity entity, mh_vec3 position, float duration, int32_t ease);
+mh_tween mh_tween_rotate_to(mh_entity entity, mh_vec3 degrees, float duration, int32_t ease);
+mh_tween mh_tween_scale_to(mh_entity entity, mh_vec3 scale, float duration, int32_t ease);
+/* A float of the entity's script (e.g. &self->alpha) from its value to another. */
+mh_tween mh_tween_float(mh_entity entity, float *value, float to, float duration, int32_t ease);
+/* Waits before starting; plays count times in all (-1: forever), back and forth with yoyo. */
+void mh_tween_delay(mh_tween tween, float seconds);
+void mh_tween_loop(mh_tween tween, int32_t count, bool yoyo);
+/* Calls fn(self, entity) when the tween ends. */
+void mh_tween_on_complete(mh_tween tween, mh_callback fn, void *self);
+void mh_tween_stop(mh_tween tween);
+void mh_tween_stop_all(mh_entity entity);
+bool mh_tween_running(mh_tween tween);
+bool mh_is_tweening(mh_entity entity);
+/* Turns by degrees per second; call it every frame. */
+void mh_spin(mh_entity entity, mh_vec3 degrees_per_second);
+
+/* ---- Timers and coroutines ---------------------------------------------------------------------- */
+
+/* A running timer, 0 for none; it stops when its entity is destroyed. */
+typedef int32_t mh_timer;
+/* fn(self, entity) once after some seconds, or every some seconds. */
+mh_timer mh_after(float seconds, mh_callback fn, void *self, mh_entity entity);
+mh_timer mh_every(float seconds, mh_callback fn, void *self, mh_entity entity);
+void mh_timer_cancel(mh_timer timer);
+
+/* Where a coroutine is, between its waits. */
+typedef struct mh_coroutine {
+    int32_t line;   /* where it waits, -1 when it ended */
+    float wait;     /* seconds left */
+    int32_t frames; /* frames left */
+} mh_coroutine;
+/* Returns true while it waits (see MH_CO_BEGIN). */
+typedef bool (*mh_coroutine_fn)(void *self, mh_entity entity, mh_coroutine *co);
+typedef int32_t mh_routine;
+mh_routine mh_start_coroutine(mh_coroutine_fn fn, void *self, mh_entity entity);
+void mh_stop_coroutine(mh_routine routine);
+void mh_stop_all_coroutines(mh_entity entity);
+
+/* A coroutine by hand: bool name(T *self, mh_entity entity, mh_coroutine *co) { MH_CO_BEGIN(co); ...
+   MH_CO_WAIT(co, 1.0f); ... MH_CO_END(co); } (local variables do not keep their value across waits;
+   keep what must last in the script's struct). One wait per line. */
+#define MH_CO_BEGIN(co) switch ((co)->line) { case 0:
+#define MH_CO_END(co) } (co)->line = -1; return false
+#define MH_CO_WAIT(co, seconds) do { (co)->wait = (seconds); (co)->line = __LINE__; return true; case __LINE__:; } while (0)
+#define MH_CO_WAIT_FRAME(co) do { (co)->frames = 1; (co)->line = __LINE__; return true; case __LINE__:; } while (0)
+#define MH_CO_STOP(co) do { (co)->line = -1; return false; } while (0)
+
+/* ---- Physics -------------------------------------------------------------------------------------
+   Components (Add Component): BoxCollider, SphereCollider (is_trigger: overlaps without pushing) and
+   Rigidbody (falls and gets pushed). Bodies do not turn from collisions. */
+
+typedef struct {
+    mh_entity entity;
+    mh_vec3 point, normal;
+    float distance;
+} mh_hit;
+
+/* The first collider along the ray (direction need not be normalized), within max_distance. */
+bool mh_raycast(mh_vec3 origin, mh_vec3 direction, float max_distance, mh_hit *hit);
+mh_vec3 mh_get_velocity(mh_entity entity);
+void mh_set_velocity(mh_entity entity, mh_vec3 velocity);
+/* Newtons for this fixed step (from FixedUpdate), or a change of momentum at once. */
+void mh_add_force(mh_entity entity, mh_vec3 force);
+void mh_add_impulse(mh_entity entity, mh_vec3 impulse);
+mh_vec3 mh_get_gravity(void);
+void mh_set_gravity(mh_vec3 gravity);
+/* The colliders of the two entities touch (or overlap). */
+bool mh_is_touching(mh_entity a, mh_entity b);
+
+/* ---- Audio -----------------------------------------------------------------------------------------
+   Files of the Assets folder (WAV, MP3, FLAC). AudioSource component: a clip, played on awake or with
+   mh_audio_play; spatial ones sound from where they are, heard from the main camera. */
+
+void mh_play_sound(const char *clip, float volume); /* once, not spatial */
+void mh_play_sound_at(const char *clip, mh_vec3 position, float volume);
+void mh_audio_play(mh_entity entity); /* its AudioSource */
+void mh_audio_stop(mh_entity entity);
+void mh_audio_pause(mh_entity entity);
+bool mh_audio_is_playing(mh_entity entity);
+void mh_audio_set_volume(mh_entity entity, float volume);
+void mh_audio_set_pitch(mh_entity entity, float pitch);
+void mh_set_master_volume(float volume);
 
 #ifdef __cplusplus
 }

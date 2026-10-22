@@ -59,7 +59,7 @@ static void mh_dump(const mh_game *game, const mh_world *w, int width, int heigh
     for (int si = 0; si < w->count; si++) {
         const mh_scene *s = &w->scenes[si].scene;
         for (int i = 0; i < s->renderer_count; i++)
-            if (s->renderers[i].cast_shadows)
+            if (s->renderers[i].cast_shadows && w->scenes[si].visible[s->renderers[i].entity])
                 casters = mh_bounds_encapsulate(casters,
                                                 mh_renderer_bounds(&s->renderers[i], w->scenes[si].world[s->renderers[i].entity]));
     }
@@ -161,11 +161,14 @@ static void mh_simulate(const mh_game *game, mh_world *w, const char *path)
                                    e->position.z, e->rotation.x, e->rotation.y, e->rotation.z, e->rotation.w };
                     mh_dump_floats("fly", si * 100 + i, v, 9);
                 }
-                for (int i = 0; i < s->entity_count; i++) {
+                /* The entities that are there (not destroyed, active), numbered in order like the editor's scene. */
+                for (int i = 0, shown = 0; i < s->entity_count; i++) {
+                    if (!mh_entity_visible(&w->scenes[si], i))
+                        continue;
                     const mh_entity_data *e = &s->entities[i];
                     float v[10] = { e->position.x, e->position.y, e->position.z, e->rotation.x, e->rotation.y,
                                     e->rotation.z, e->rotation.w, e->scale.x, e->scale.y, e->scale.z };
-                    mh_dump_floats("entity", si * 1000 + i, v, 10);
+                    mh_dump_floats("entity", si * 1000 + shown++, v, 10);
                 }
             }
             printf("time %.9g %.9g %d\n", w->time, w->delta_time, w->frame_count);

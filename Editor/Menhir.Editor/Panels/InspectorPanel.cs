@@ -188,7 +188,10 @@ public sealed class InspectorPanel : EditorPanel
         }
     }
 
-    /// <summary>The project's scripts (Project > Create > C Script makes one).</summary>
+    /// <summary>
+    /// The runtime's built-in components (Physics, Audio), then the project's scripts (Project > Create >
+    /// C Script makes one): all of them come from the compiled scripts' library.
+    /// </summary>
     private bool DrawAddScriptItems(Entity entity)
     {
         string search = _componentSearch.Trim();
@@ -199,22 +202,36 @@ public sealed class InspectorPanel : EditorPanel
         if (types.Count == 0 && (search.Length > 0 || !_scripts.IsCompiling))
             return false;
 
-        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.TextDim);
-        ImGui.SeparatorText("Scripts");
-        ImGui.PopStyleColor();
         if (types.Count == 0)
-            ImGui.TextDisabled("Compiling the scripts...");
-        foreach (ScriptType type in types)
         {
-            bool present = entity.Components.OfType<ScriptComponent>().Any(c => c.ScriptName == type.Name);
-            if (ImGui.Selectable($"{Icons.Script}  {InspectableProperties.NicifyName(type.Name)}", false,
-                    present ? ImGuiSelectableFlags.Disabled : ImGuiSelectableFlags.None))
+            Separator("Scripts");
+            ImGui.TextDisabled("Compiling the scripts...");
+            return true;
+        }
+        foreach (var group in types.GroupBy(t => ScriptCompiler.BuiltInCategory(t.Name) ?? "Scripts")
+                     .OrderBy(g => g.Key switch { "Physics" => 0, "Audio" => 1, _ => 2 }))
+        {
+            Separator(group.Key);
+            foreach (ScriptType type in group)
             {
-                var component = new ScriptComponent { ScriptName = type.Name };
-                _pendingChange = () => _context.Execute(new AddComponentCommand(entity, component));
+                bool present = entity.Components.OfType<ScriptComponent>().Any(c => c.ScriptName == type.Name);
+                string icon = group.Key switch { "Physics" => Icons.Model, "Audio" => Icons.Component, _ => Icons.Script };
+                if (ImGui.Selectable($"{icon}  {InspectableProperties.NicifyName(type.Name)}", false,
+                        present ? ImGuiSelectableFlags.Disabled : ImGuiSelectableFlags.None))
+                {
+                    var component = new ScriptComponent { ScriptName = type.Name };
+                    _pendingChange = () => _context.Execute(new AddComponentCommand(entity, component));
+                }
             }
         }
         return true;
+
+        static void Separator(string title)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.TextDim);
+            ImGui.SeparatorText(title);
+            ImGui.PopStyleColor();
+        }
     }
 
     private static void DrawAsset(AssetEntry asset)

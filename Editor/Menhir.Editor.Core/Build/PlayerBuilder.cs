@@ -11,7 +11,7 @@ public sealed class BuildException(string message) : Exception(message);
 /// compiled once into a static library and kept in the cache folder. Linux builds use X11 (GLFW
 /// loads the X11 libraries when the game starts, so only their development headers are needed to
 /// build). The Windows (MinGW) and macOS settings follow GLFW's build files but are untested.
-/// A game with scripts compiles their .c files with it, and the API's menhir_script.c (Engine/Scripting).
+/// The game's scripts are compiled with it, with the scripting runtime (Engine/Scripting/src) and miniaudio.
 /// </summary>
 public sealed class PlayerBuilder
 {
@@ -56,7 +56,7 @@ public sealed class PlayerBuilder
         List<string> glfw = GlfwLibrary(cacheDirectory, log);
         log?.Invoke(scripts == null ? $"Compiling {Path.GetFileName(mainC)}" : $"Compiling {Path.GetFileName(mainC)} and {scripts.Count} script file(s)");
         var arguments = new List<string>(PlayerFlags) { "-O2", mainC, "-I", Path.Combine(GlfwDirectory, "include") };
-        arguments.AddRange(ScriptArguments(scripts, Path.Combine(cacheDirectory, "Scripts")));
+        arguments.AddRange(ScriptArguments(scripts, Path.Combine(cacheDirectory, "Scripts"), audio: true, log));
         arguments.AddRange(glfw);
         arguments.AddRange(["-o", executable]);
         arguments.AddRange(Platform.LinkFlags);
@@ -65,14 +65,14 @@ public sealed class PlayerBuilder
 
     /// <summary>Compiles the player without OpenGL or a window (only <c>--dump</c> and <c>--simulate</c> work), for tests.</summary>
     public void BuildHeadless(string mainC, string executable, IReadOnlyList<string>? scripts = null) =>
-        Run([.. PlayerFlags, "-O1", "-DMENHIR_HEADLESS", mainC, .. ScriptArguments(scripts, executable + "-scripts"),
+        Run([.. PlayerFlags, "-O1", "-DMENHIR_HEADLESS", mainC, .. ScriptArguments(scripts, executable + "-scripts", audio: false, null),
              "-o", executable, "-lm"]);
 
     /// <summary>
     /// With scripts: MENHIR_SCRIPTS and the API's headers for main.c, and the scripts compiled on their own
     /// into <paramref name="objectDirectory"/>, with menhir.h included first (see <see cref="ScriptFlags"/>).
     /// </summary>
-    private List<string> ScriptArguments(IReadOnlyList<string>? scripts, string objectDirectory)
+    private List<string> ScriptArguments(IReadOnlyList<string>? scripts, string objectDirectory, bool audio, Action<string>? log)
     {
         if (scripts == null)
             return [];
@@ -81,10 +81,43 @@ public sealed class PlayerBuilder
         for (int i = 0; i < scripts.Count; i++)
         {
             string obj = Path.Combine(objectDirectory, $"{i}-{Path.GetFileNameWithoutExtension(scripts[i])}.o");
-            Run([.. PlayerFlags, .. ScriptFlags(EngineDirectory), "-O2", "-c", scripts[i], "-o", obj]);
+            Run([.. PlayerFlags, .. ScriptFlags(EngineDirectory), "-O2", .. audio ? Array.Empty<string>() : ["-DMENHIR_NO_AUDIO"],
+                 "-c", scripts[i], "-o", obj]);
             arguments.Add(obj);
         }
+        if (audio)
+            arguments.Add(MiniaudioObject(["-O2"], log));
         return arguments;
+    }
+
+    private static readonly object CacheLock = new();
+
+    /// <summary>
+    /// miniaudio (Engine/ThirdParty/miniaudio) compiled with <paramref name="flags"/>: it takes a while, so it
+    /// is kept in the user's cache folder (Menhir/Cache), one object per compiler, flags and miniaudio version.
+    /// </summary>
+    public string MiniaudioObject(string[] flags, Action<string>? log = null)
+    {
+        string source = Path.Combine(EngineDirectory, "Scripting", "src", "menhir_miniaudio.c");
+        string header = Path.Combine(EngineDirectory, "ThirdParty", "miniaudio", "miniaudio.h");
+        using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+        hash.AppendData(System.Text.Encoding.UTF8.GetBytes(Compiler + "\n" + string.Join(' ', flags) + "\n" + File.ReadAllText(source)));
+        hash.AppendData(File.ReadAllBytes(header));
+        string key = Convert.ToHexString(hash.GetHashAndReset())[..16].ToLowerInvariant();
+        string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData,
+            Environment.SpecialFolderOption.Create), "Menhir", "Cache");
+        string obj = Path.Combine(directory, $"miniaudio-{key}.o");
+        lock (CacheLock)
+        {
+            if (File.Exists(obj))
+                return obj;
+            log?.Invoke("Compiling miniaudio (once, then kept in the cache)");
+            Directory.CreateDirectory(directory);
+            string partial = Path.Combine(directory, $"miniaudio-{key}-{Guid.NewGuid():N}.tmp.o");
+            Run(["-std=gnu11", .. flags, "-c", source, "-o", partial]);
+            File.Move(partial, obj, overwrite: true);
+            return obj;
+        }
     }
 
     /// <summary>

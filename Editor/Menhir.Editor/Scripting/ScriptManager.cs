@@ -14,7 +14,8 @@ public sealed record CompiledScripts(string LibraryPath, IReadOnlyList<ScriptTyp
 /// <summary>
 /// Keeps the project's C scripts compiled for Play mode: compiles them (in the background) when the
 /// project opens and whenever a .c or .h file changes, logs the compiler's messages to the Console and
-/// reads the script types (for the inspector and Add Component).
+/// reads the script types (for the inspector and Add Component). A project without scripts is compiled
+/// too: the runtime's built-in components (Rigidbody, BoxCollider, AudioSource...) are script types.
 /// </summary>
 public sealed class ScriptManager : IDisposable
 {
@@ -23,8 +24,9 @@ public sealed class ScriptManager : IDisposable
     private readonly string? _engineDirectory = PlayerBuilder.FindEngineDirectory(AppContext.BaseDirectory);
     private Project? _project;
     private Task<(ScriptCompileResult Result, CompiledScripts? Scripts, string? LoadError)>? _task;
-    private DateTime _compiledChange = DateTime.MinValue;
+    private DateTime? _compiledChange;
     private DateTime _compilingChange;
+    private bool _hasScripts;
     private long _lastPoll;
     private Stopwatch _timer = new();
 
@@ -42,7 +44,7 @@ public sealed class ScriptManager : IDisposable
     public void OpenProject(Project project)
     {
         _project = project;
-        _compiledChange = DateTime.MinValue;
+        _compiledChange = null;
         SetCurrent(null);
         HasErrors = false;
         _lastPoll = 0;
@@ -89,17 +91,6 @@ public sealed class ScriptManager : IDisposable
         if (_project is not { } project || _task != null)
             return;
         DateTime change = ScriptCompiler.LastChange(project);
-        if (!ScriptCompiler.HasScripts(project))
-        {
-            if (Current != null || HasErrors)
-            {
-                // The last script was deleted.
-                HasErrors = false;
-                _compiledChange = DateTime.MinValue;
-                SetCurrent(null);
-            }
-            return;
-        }
         if (change == _compiledChange)
             return;
         if (_engineDirectory is not { } engine)
@@ -111,7 +102,9 @@ public sealed class ScriptManager : IDisposable
         }
 
         _compilingChange = change;
-        Log.Info("Compiling scripts...");
+        _hasScripts = ScriptCompiler.HasScripts(project);
+        if (_hasScripts)
+            Log.Info("Compiling scripts...");
         _timer = Stopwatch.StartNew();
         string library = LibraryPath(project);
         _task = Task.Run(() =>
@@ -141,6 +134,14 @@ public sealed class ScriptManager : IDisposable
                 Log.Warning(diagnostic.ToString());
         }
         HasErrors = outcome.Scripts == null;
+        if (!outcome.Result.Success && !_hasScripts)
+        {
+            // Only the built-in components were missed: Play mode works, without them.
+            HasErrors = false;
+            Log.Warning("The built-in components (Rigidbody, colliders, AudioSource) need a C compiler: " +
+                        string.Join(" ", outcome.Result.Errors.Select(e => e.Message)));
+            return;
+        }
         if (!outcome.Result.Success)
         {
             Log.Error("The scripts have compile errors: fix them to use the latest scripts and to enter Play mode.");
@@ -152,8 +153,9 @@ public sealed class ScriptManager : IDisposable
                       (OperatingSystem.IsWindows() ? " (Windows' Smart App Control blocks libraries it does not know.)" : ""));
             return;
         }
-        int count = outcome.Scripts!.Types.Count;
-        Log.Info($"Compiled scripts in {_timer.Elapsed.TotalSeconds:0.0} s ({count} script{(count == 1 ? "" : "s")})");
+        int count = outcome.Scripts!.Types.Count(t => !ScriptCompiler.BuiltInComponents.Contains(t.Name));
+        if (_hasScripts)
+            Log.Info($"Compiled scripts in {_timer.Elapsed.TotalSeconds:0.0} s ({count} script{(count == 1 ? "" : "s")})");
         SetCurrent(outcome.Scripts);
     }
 

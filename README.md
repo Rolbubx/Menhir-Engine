@@ -119,12 +119,16 @@ A component whose type no longer exists is kept as is and saved back unchanged.
 
 ### Scripts and Play mode
 
-Every `.c` file in `Assets/` is part of the project's scripts; a struct declared with `MH_SCRIPT` can be
-added to entities (**Add Component → Scripts**), and the fields it lists show in the Inspector and are saved
-with the scene. **Project → Create → C Script** makes one from a template (renaming the new file renames its
-struct); double-click opens it with the system's editor. The editor compiles the scripts in the background
-with the C compiler of **Project Settings → Build** (when the project opens and whenever a `.c` or `.h` file
-changes) and lists the errors in the Console. See [Docs/Scripting.md](Docs/Scripting.md) for the API.
+Every `.c` file in `Assets/` is part of the project's scripts. In the simple syntax a file is one script
+named after it (`MH_VARS { ... }`, `MH_START() { ... }`, `MH_UPDATE() { ... }`...); the classic one declares a
+struct with `MH_SCRIPT`. Scripts are added to entities (**Add Component → Scripts**), and their fields show in
+the Inspector and are saved with the scene. **Add Component** also has the built-in **Physics** (Box Collider,
+Sphere Collider, Rigidbody) and **Audio** (Audio Source) components. **Project → Create → C Script** makes a
+script from a template (renaming the new file renames it); double-click opens it with the system's editor. The
+editor compiles the scripts in the background with the C compiler of **Project Settings → Build** (when the
+project opens and whenever a `.c` or `.h` file changes) and lists the errors in the Console. Scripts can spawn
+and destroy objects, tween them, use timers, coroutines, physics and sounds: see
+[Docs/Scripting.md](Docs/Scripting.md).
 
 The **Play** button (top middle, Ctrl+P) runs the game in the editor on copies of the scenes, starting with the
 open one: the **Game** panel shows the game's camera and gets the keyboard, mouse and gamepad while it has the

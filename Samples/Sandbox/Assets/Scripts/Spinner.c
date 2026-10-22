@@ -1,21 +1,16 @@
-#include <menhir.h>
+/* Turns the object around an axis; Space reverses it, and R gives it a quick extra turn. */
+MH_CREATE Spinner.c
 
-/* Turns the entity around an axis; Space reverses it. */
-typedef struct {
-    float speed;
-    mh_vec3 axis;
-} Spinner;
-
-static const mh_field Spinner_fields[] = {
-    MH_FLOAT(Spinner, speed, 45, MH_RANGE(0, 360), MH_TOOLTIP("Degrees per second")),
-    MH_VEC3(Spinner, axis, 0, 1, 0),
+MH_VARS {
+    float speed = 45;           // MH_RANGE(0, 360) Degrees per second
+    MH_VEC3 axis = MH_VEC3(0, 1, 0);
 };
 
-static void Spinner_update(Spinner *self, mh_entity entity)
+MH_UPDATE()
 {
-    if (mh_key_down("space"))
-        self->speed = -self->speed;
-    mh_rotate(entity, mh_v3_scale(self->axis, self->speed * mh_delta_time()), true);
+    if (MH_KEY_DOWN("space"))
+        self.speed = -self.speed;
+    if (MH_KEY_DOWN("r") && !MH_IS_TWEENING(MH_PARENT))
+        MH_ROTATE(MH_PARENT, MH_VEC3(0, 360, 0), 0.6f, MH_TWEEN_TYPE(MH_BACK_OUT));
+    MH_SPIN(MH_PARENT, mh_v3_scale(self.axis, self.speed));
 }
-
-MH_SCRIPT(Spinner, MH_FIELDS(Spinner_fields), MH_UPDATE(Spinner_update));

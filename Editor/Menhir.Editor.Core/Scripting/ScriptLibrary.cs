@@ -19,9 +19,18 @@ public enum ScriptFieldKind
 public sealed record ScriptField(string Name, ScriptFieldKind Kind, int Offset, double[] Default, string DefaultText,
     float? Min, float? Max, string? Tooltip, IReadOnlyList<string> Options);
 
-/// <summary>A script type of the project. The callbacks point into the library it was read from, while it is loaded.</summary>
-public sealed record ScriptType(string Name, int Size, IReadOnlyList<ScriptField> Fields,
-    nint Awake, nint Start, nint Update, nint LateUpdate);
+/// <summary>Where a script type's callbacks are (mh_script_type), in the library it was read from, while it is loaded.</summary>
+public sealed record ScriptCallbacks(nint Awake, nint Start, nint Update, nint LateUpdate, nint FixedUpdate, nint OnDestroy,
+    nint OnGameClose)
+{
+    public static readonly ScriptCallbacks None = new(0, 0, 0, 0, 0, 0, 0);
+}
+
+/// <summary>
+/// A script type of the project (or a built-in component of the runtime, e.g. Rigidbody). Native is its
+/// mh_script_type, and Callbacks its functions, while the library it was read from is loaded.
+/// </summary>
+public sealed record ScriptType(string Name, int Size, IReadOnlyList<ScriptField> Fields, nint Native, ScriptCallbacks Callbacks);
 
 /// <summary>
 /// The project's scripts compiled into a shared library (see <see cref="ScriptCompiler"/>), loaded in the
@@ -53,12 +62,14 @@ public sealed unsafe class ScriptLibrary : IDisposable
         public uint Size;
         public NativeField* Fields;
         public int FieldCount;
-        public nint Awake, Start, Update, LateUpdate;
+        public nint Awake, Start, Update, LateUpdate, FixedUpdate, OnDestroy, OnGameClose;
+        public nint CollisionEnter, CollisionExit, TriggerEnter, TriggerExit;
     }
 
     private readonly nint _handle;
     private readonly string _copy;
     private readonly delegate* unmanaged<void*, void> _bind;
+    private readonly delegate* unmanaged<void> _update, _fixedStep, _shutdown;
 
     private ScriptLibrary(nint handle, string copy)
     {
@@ -71,6 +82,9 @@ public sealed unsafe class ScriptLibrary : IDisposable
             throw new InvalidDataException(
                 $"The scripts' library does not match the editor (structure sizes {sizes[0]}, {sizes[1]}, {sizes[2]}).");
         _bind = (delegate* unmanaged<void*, void>)Export("mh_bind");
+        _update = (delegate* unmanaged<void>)Export("mh_runtime_update");
+        _fixedStep = (delegate* unmanaged<void>)Export("mh_runtime_fixed_step");
+        _shutdown = (delegate* unmanaged<void>)Export("mh_runtime_shutdown");
 
         var count = (delegate* unmanaged<int>)Export("mh_script_type_count");
         var at = (delegate* unmanaged<int, NativeScriptType*>)Export("mh_script_type_at");
@@ -118,11 +132,20 @@ public sealed unsafe class ScriptLibrary : IDisposable
     {
         using ScriptLibrary library = Load(path);
         // The callbacks are only valid while the copy is loaded.
-        return library.Types.Select(t => t with { Awake = 0, Start = 0, Update = 0, LateUpdate = 0 }).ToList();
+        return library.Types.Select(t => t with { Native = 0, Callbacks = ScriptCallbacks.None }).ToList();
     }
 
     /// <summary>Gives the scripts the engine (menhir_script.c's mh_bind, which also seeds mh_random).</summary>
     public void Bind(void* api) => _bind(api);
+
+    /// <summary>The runtime's timers, coroutines, tweens and audio, after the scripts' Update (mh_runtime_update).</summary>
+    public void RuntimeUpdate() => _update();
+
+    /// <summary>The physics, after the scripts' FixedUpdate (mh_runtime_fixed_step).</summary>
+    public void FixedStep() => _fixedStep();
+
+    /// <summary>The game ended: the runtime stops its sounds and forgets everything (mh_runtime_shutdown).</summary>
+    public void Shutdown() => _shutdown();
 
     public ScriptType? Find(string name) => Types.FirstOrDefault(t => t.Name == name);
 
@@ -145,7 +168,8 @@ public sealed unsafe class ScriptLibrary : IDisposable
                 f->HasRange != 0 ? f->Min : null, f->HasRange != 0 ? f->Max : null,
                 f->Tooltip != null ? Text(f->Tooltip) : null, options));
         }
-        return new ScriptType(Text(t->Name), (int)t->Size, fields, t->Awake, t->Start, t->Update, t->LateUpdate);
+        return new ScriptType(Text(t->Name), (int)t->Size, fields, (nint)t,
+            new ScriptCallbacks(t->Awake, t->Start, t->Update, t->LateUpdate, t->FixedUpdate, t->OnDestroy, t->OnGameClose));
     }
 
     private static string Text(byte* utf8) => utf8 == null ? "" : Marshal.PtrToStringUTF8((nint)utf8) ?? "";

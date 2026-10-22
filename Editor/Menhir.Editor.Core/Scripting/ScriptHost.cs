@@ -10,7 +10,7 @@ namespace Menhir.Editor.Scripting;
 /// </summary>
 public static unsafe class ScriptHost
 {
-    private const int FunctionCount = 14;
+    private const int FunctionCount = 25;
 
     public static uint ApiSize => (uint)(FunctionCount * sizeof(nint));
 
@@ -39,6 +39,18 @@ public static unsafe class ScriptHost
         table[i++] = (nint)(delegate* unmanaged<int, byte*, void>)&Log;
         table[i++] = (nint)(delegate* unmanaged<byte*, int, int, int>)&LoadScene;
         table[i++] = (nint)(delegate* unmanaged<void>)&Quit;
+        table[i++] = (nint)(delegate* unmanaged<int, int>)&IsAlive;
+        table[i++] = (nint)(delegate* unmanaged<int, int, int>)&Instantiate;
+        table[i++] = (nint)(delegate* unmanaged<int, void>)&Destroy;
+        table[i++] = (nint)(delegate* unmanaged<int, int, void>)&SetActive;
+        table[i++] = (nint)(delegate* unmanaged<int, int, int>)&GetActive;
+        table[i++] = (nint)(delegate* unmanaged<int, int>)&ChildCount;
+        table[i++] = (nint)(delegate* unmanaged<int, int, int>)&ChildAt;
+        table[i++] = (nint)(delegate* unmanaged<int, int, void>)&SetParent;
+        table[i++] = (nint)(delegate* unmanaged<int, int, nint*, void*>)&ScriptAt;
+        table[i++] = (nint)(delegate* unmanaged<byte*, byte*>)&AssetPath;
+        table[i++] = (nint)(delegate* unmanaged<int>)&MainCamera;
+        System.Diagnostics.Debug.Assert(i == FunctionCount);
         return table;
     }
 
@@ -93,7 +105,7 @@ public static unsafe class ScriptHost
 
     [UnmanagedCallersOnly]
     private static float GetTime(int which) =>
-        Guard(s => which == 0 ? s.DeltaTime : which == 1 ? s.Time : s.FrameCount, 0f);
+        Guard(s => which switch { 0 => s.DeltaTime, 1 => s.Time, 2 => s.FrameCount, _ => PlaySession.FixedDeltaTime }, 0f);
 
     [UnmanagedCallersOnly]
     private static void Log(int level, byte* message) => Guard(s => { s.Log(level, Text(message)); return 0; }, 0);
@@ -104,4 +116,44 @@ public static unsafe class ScriptHost
 
     [UnmanagedCallersOnly]
     private static void Quit() => Guard(s => { s.Quit(); return 0; }, 0);
+
+    [UnmanagedCallersOnly]
+    private static int IsAlive(int entity) => Guard(s => s.IsAlive(entity) ? 1 : 0, 0);
+
+    [UnmanagedCallersOnly]
+    private static int Instantiate(int entity, int parent) => Guard(s => s.Instantiate(entity, parent), -1);
+
+    [UnmanagedCallersOnly]
+    private static void Destroy(int entity) => Guard(s => { s.Destroy(entity); return 0; }, 0);
+
+    [UnmanagedCallersOnly]
+    private static void SetActive(int entity, int active) => Guard(s => { s.SetActive(entity, active != 0); return 0; }, 0);
+
+    [UnmanagedCallersOnly]
+    private static int GetActive(int entity, int inHierarchy) => Guard(s => s.GetActive(entity, inHierarchy != 0) ? 1 : 0, 0);
+
+    [UnmanagedCallersOnly]
+    private static int ChildCount(int entity) => Guard(s => s.ChildCount(entity), 0);
+
+    [UnmanagedCallersOnly]
+    private static int ChildAt(int entity, int index) => Guard(s => s.ChildAt(entity, index), -1);
+
+    [UnmanagedCallersOnly]
+    private static void SetParent(int entity, int parent) => Guard(s => { s.SetParent(entity, parent); return 0; }, 0);
+
+    [UnmanagedCallersOnly]
+    private static void* ScriptAt(int entity, int index, nint* type) =>
+        (void*)Guard(s =>
+        {
+            (nint memory, nint native) = s.ScriptAt(entity, index);
+            if (type != null)
+                *type = native;
+            return memory;
+        }, 0);
+
+    [UnmanagedCallersOnly]
+    private static byte* AssetPath(byte* relative) => (byte*)Guard(s => s.AssetPath(Text(relative)), 0);
+
+    [UnmanagedCallersOnly]
+    private static int MainCamera() => Guard(s => s.MainCamera(), -1);
 }

@@ -12,7 +12,7 @@
      --simulate <file>    play a script of input events without a window (see mh_dump.c)
    --dump and --simulate are the only options of a MENHIR_HEADLESS build, used by the editor's tests.
    A game with scripts is built with MENHIR_SCRIPTS and linked with them and Engine/Scripting's
-   menhir_script.c (see mh_scripts.c). */
+   runtime (see mh_scripts.c); their sounds are in the Assets folder next to the data file. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -188,6 +188,7 @@ int main(int argc, char **argv)
     char *path = options.data ? NULL : mh_default_data_path(argc > 0 ? argv[0] : "");
     mh_data data;
     mh_data_open(&data, options.data ? options.data : path);
+    mh_set_asset_root(options.data ? options.data : path);
     free(path);
 
     mh_game game;
@@ -203,12 +204,12 @@ int main(int argc, char **argv)
 
     if (options.dump) {
         mh_dump(&game, &world, width, height);
-        mh_world_unload_all(&world);
+        mh_world_close(&world);
         return 0;
     }
     if (options.simulate) {
         mh_simulate(&game, &world, options.simulate);
-        mh_world_unload_all(&world);
+        mh_world_close(&world);
         return 0;
     }
 
@@ -284,9 +285,9 @@ int main(int argc, char **argv)
     if (options.screenshot && renderer.width)
         mh_save_ppm(options.screenshot, renderer.width, renderer.height, renderer.output_framebuffer);
 
+    mh_world_close(&world);
     glfwDestroyWindow(window);
     glfwTerminate();
-    mh_world_unload_all(&world);
     return 0;
 #endif
 }

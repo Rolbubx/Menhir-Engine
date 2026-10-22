@@ -100,7 +100,7 @@ public sealed class PlayMode : IDisposable
         }
         IsPaused = false;
         Log.Info($"Play mode: {scenes[first].Name}");
-        Session = new PlaySession(scenes, first, project.Settings.Input, _library, Write);
+        Session = new PlaySession(scenes, first, project.Settings.Input, _library, Write, project.Assets.AssetsDirectory);
     }
 
     public void Stop()

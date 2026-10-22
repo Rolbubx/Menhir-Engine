@@ -66,10 +66,13 @@ static void mh_environment_begin(mh_environment *env)
 }
 
 /* Adds a scene's lights; *has_sun is set once a directional light became the sun. */
-static void mh_gather_lights(const mh_scene *scene, const mat4 *world, mh_environment *env, int *has_sun)
+static void mh_gather_lights(const mh_scene *scene, const mat4 *world, const unsigned char *visible, mh_environment *env,
+                             int *has_sun)
 {
     for (int i = 0; i < scene->light_count; i++) {
         const mh_light *light = &scene->lights[i];
+        if (!visible[light->entity])
+            continue;
         mat4 m = world[light->entity];
         vec3 forward = mh_forward(m);
         if (light->type == MH_LIGHT_DIRECTIONAL) {

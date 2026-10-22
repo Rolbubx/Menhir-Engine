@@ -2,34 +2,29 @@ using Menhir.Editor.Assets;
 
 namespace Menhir.Editor.Scripting;
 
-/// <summary>Project > Create > C Script: a new script, its struct named after its file.</summary>
+/// <summary>Project > Create > C Script: a new script in the simple syntax (menhir_simple.h), named after its file.</summary>
 public static class ScriptTemplate
 {
     public const string DefaultName = "NewScript";
 
     public static string Content(string name) => $$"""
-        #include <menhir.h>
+        MH_CREATE {{name}}.c
 
-        typedef struct {
-            float speed;
-        } {{name}};
-
-        /* The fields the inspector shows and scenes save: MH_INT, MH_FLOAT, MH_BOOL, MH_VEC3, MH_STRING... */
-        static const mh_field {{name}}_fields[] = {
-            MH_FLOAT({{name}}, speed, 1),
+        /* The script's variables, one copy per object. Numbers, booleans, vectors, colors and texts are
+           fields the inspector shows (MH_RANGE(min, max), MH_HIDE and a tooltip go in a comment after them). */
+        MH_VARS {
+            float speed = 1;    // MH_RANGE(0, 10) Meters per second
         };
 
         /* Before the first update. */
-        static void {{name}}_start({{name}} *self, mh_entity entity)
+        MH_START()
         {
         }
 
         /* Every frame. */
-        static void {{name}}_update({{name}} *self, mh_entity entity)
+        MH_UPDATE()
         {
         }
-
-        MH_SCRIPT({{name}}, MH_FIELDS({{name}}_fields), MH_START({{name}}_start), MH_UPDATE({{name}}_update));
 
         """;
 
@@ -48,8 +43,8 @@ public static class ScriptTemplate
     }
 
     /// <summary>
-    /// After a script file is renamed: when it is still the untouched template, its struct takes the
-    /// new name, like Unity does with classes. Returns true when the file was rewritten.
+    /// After a script file is renamed: when it is still the untouched template, its MH_CREATE line takes
+    /// the new name, like Unity does with classes. Returns true when the file was rewritten.
     /// </summary>
     public static bool RenameClass(string absolutePath, string oldFileName, string newFileName)
     {

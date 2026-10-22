@@ -335,6 +335,8 @@ static void mh_render_frame(mh_renderer *r, const mh_game *game, const mh_world 
         const mh_scene *s = &w->scenes[si].scene;
         for (int i = 0; i < s->renderer_count; i++) {
             const mh_mesh_renderer *renderer = &s->renderers[i];
+            if (!w->scenes[si].visible[renderer->entity])
+                continue;
             const mh_gpu_mesh *mesh = mh_renderer_mesh(r, renderer->mesh);
             if (!mesh)
                 continue;

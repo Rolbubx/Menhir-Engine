@@ -45,15 +45,42 @@ public static class GameBuild
         string mainC = Path.Combine(directory, "main.c");
         File.WriteAllText(mainC, PlayerSource.Amalgamate(engineDirectory));
 
-        // The scripts are compiled with the player, with the API's own C file.
-        List<string> scripts = ScriptCompiler.ScriptFiles(project).ToList();
-        if (scripts.Count > 0)
-            scripts.Add(ScriptCompiler.ApiSource(engineDirectory));
+        // The scripts are compiled with the player, with the scripting runtime (even without scripts: its
+        // built-in components, Rigidbody, colliders and AudioSource, are scripts too).
+        (List<string> scripts, List<Scripting.ScriptDiagnostic> prepared) =
+            ScriptCompiler.PrepareSources(project, Path.Combine(project.CacheDirectory, "Player", "Generated"));
+        if (prepared.Any(d => d.IsError))
+            throw new BuildException("The scripts have errors:\n" + string.Join("\n", prepared.Where(d => d.IsError)));
+        scripts.AddRange(ScriptCompiler.ApiSources(engineDirectory));
+        CopyAudio(project, directory, log);
 
         string executable = Path.Combine(directory, PlayerBuilder.ExecutableName(name));
         new PlayerBuilder(engineDirectory, project.Settings.Build.Compiler)
-            .Build(mainC, executable, Path.Combine(project.CacheDirectory, "Player"), log, scripts.Count > 0 ? scripts : null);
+            .Build(mainC, executable, Path.Combine(project.CacheDirectory, "Player"), log, scripts);
         return new GameBuildResult(directory, executable, warnings);
+    }
+
+    /// <summary>The audio files ScriptCompiler's runtime plays (mh_asset_path), copied into the build's Assets/.</summary>
+    public static readonly string[] AudioExtensions = [".wav", ".mp3", ".flac"];
+
+    private static void CopyAudio(Project project, string directory, Action<string> log)
+    {
+        string assets = project.Assets.AssetsDirectory, target = Path.Combine(directory, "Assets");
+        if (Directory.Exists(target))
+            Directory.Delete(target, recursive: true);
+        if (!Directory.Exists(assets))
+            return;
+        List<string> files = Directory.EnumerateFiles(assets, "*", SearchOption.AllDirectories)
+            .Where(f => AudioExtensions.Contains(Path.GetExtension(f).ToLowerInvariant())).ToList();
+        if (files.Count == 0)
+            return;
+        log($"Copying {files.Count} sound file(s)");
+        foreach (string file in files)
+        {
+            string copy = Path.Combine(target, Path.GetRelativePath(assets, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+            File.Copy(file, copy, overwrite: true);
+        }
     }
 
     /// <summary>

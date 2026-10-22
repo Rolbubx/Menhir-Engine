@@ -26,7 +26,7 @@ public sealed class ScriptTemplateTests : IDisposable
     {
         Assert.Equal("Assets/NewScript.c", ScriptTemplate.Create(_project.Assets, AssetPaths.Root));
         Assert.Equal("Assets/NewScript1.c", ScriptTemplate.Create(_project.Assets, AssetPaths.Root));
-        Assert.Contains("MH_SCRIPT(NewScript1,", File.ReadAllText(_project.Assets.ToAbsolutePath("Assets/NewScript1.c")));
+        Assert.Contains("MH_CREATE NewScript1.c", File.ReadAllText(_project.Assets.ToAbsolutePath("Assets/NewScript1.c")));
         Assert.Equal(AssetImporters.Script, _project.Assets.FindByPath("Assets/NewScript1.c")!.Meta.Importer);
     }
 
@@ -41,7 +41,7 @@ public sealed class ScriptTemplateTests : IDisposable
         File.AppendAllText(file, "// edited\n");
         Assert.False(ScriptTemplate.RenameClass(file, "Player.c", "Hero.c"));
         Assert.False(ScriptTemplate.RenameClass(file, "Player.c", "My Hero.c")); // not a C name
-        Assert.Contains("} Player;", File.ReadAllText(file));
+        Assert.Contains("MH_CREATE Player.c", File.ReadAllText(file));
     }
 
     [Fact]

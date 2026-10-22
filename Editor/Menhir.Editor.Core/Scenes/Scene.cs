@@ -87,6 +87,18 @@ public sealed class Scene
         }
     }
 
+    /// <summary>
+    /// Play mode: the entities the scene has now (some created, destroyed or deactivated by the scripts),
+    /// in that order. Their IDs stay as they are.
+    /// </summary>
+    public void ReplaceEntities(IEnumerable<Entity> entities)
+    {
+        _entities.Clear();
+        _entities.AddRange(entities);
+        foreach (Entity entity in _entities)
+            _nextLocalId = Math.Max(_nextLocalId, entity.LocalId + 1);
+    }
+
     /// <summary>Moves an entity to another list index (which changes its sibling order), nothing else.</summary>
     public void MoveEntity(Entity entity, int index)
     {

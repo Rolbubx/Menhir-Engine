@@ -4,15 +4,15 @@ using Menhir.Editor.Inspection;
 namespace Menhir.Editor.Scenes;
 
 /// <summary>
-/// A script of the project (a class deriving from Menhir.Script) on an entity: its class name and
-/// the values of its public fields, as saved in the scene. The editor runs it in Play mode, the
-/// built game after IL2C. Fields left out keep the value the class gives them.
+/// A script of the project (a C struct declared with MH_SCRIPT, see Docs/Scripting.md) on an entity:
+/// its name and the values of its fields, as saved in the scene. Fields left out keep the default
+/// the script declares.
 /// </summary>
 public sealed class ScriptComponent : Component
 {
-    /// <summary>Full name of the script class, e.g. "Game.PlayerController" (or "PlayerController" without a namespace).</summary>
+    /// <summary>The script's struct name, e.g. "PlayerController".</summary>
     [HideInInspector]
-    public string ClassName { get; set; } = "";
+    public string ScriptName { get; set; } = "";
 
     [HideInInspector]
     public Dictionary<string, JsonElement> Fields { get; set; } = new();

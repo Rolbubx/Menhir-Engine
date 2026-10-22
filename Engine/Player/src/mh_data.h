@@ -64,7 +64,7 @@ typedef struct {
     vec3 position;
     quat rotation;
     vec3 scale;
-} mh_entity;
+} mh_entity_data;
 
 typedef struct {
     int entity;
@@ -172,7 +172,7 @@ typedef struct {
 
 typedef struct {
     int entity;
-    char *class_name; /* like .NET's Type.FullName */
+    char *script_name; /* the script's struct name */
     int value_count;
     mh_script_value *values;
 } mh_script_data;
@@ -186,7 +186,7 @@ typedef struct {
     vec3 ambient_top, ambient_horizon, ambient_bottom;
 
     int entity_count;
-    mh_entity *entities;
+    mh_entity_data *entities;
     int renderer_count;
     mh_mesh_renderer *renderers;
     int light_count;

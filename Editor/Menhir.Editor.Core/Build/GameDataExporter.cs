@@ -297,16 +297,16 @@ public static class GameDataExporter
         // Scripts with their saved field values as JSON gave them; the player converts each to its field's type.
         var scripts = entities
             .SelectMany((e, i) => e.Components.OfType<ScriptComponent>().Select(c => (Entity: i, Component: c)))
-            .Where(s => s.Component.ClassName.Length > 0)
+            .Where(s => s.Component.ScriptName.Length > 0)
             .ToList();
         w.U32((uint)scripts.Count);
         foreach ((int entity, ScriptComponent script) in scripts)
         {
             w.U32((uint)entity);
-            w.String(script.ClassName);
+            w.String(script.ScriptName);
             var values = script.Fields.Where(f => ScriptValueKind(f.Value) != null).ToList();
             foreach (var skipped in script.Fields.Where(f => ScriptValueKind(f.Value) == null))
-                warnings.Add($"{buildScene.Name}: the value of {script.ClassName}.{skipped.Key} on {entities[entity].Name} " +
+                warnings.Add($"{buildScene.Name}: the value of {script.ScriptName}.{skipped.Key} on {entities[entity].Name} " +
                              "is not a number, boolean, string or list of numbers; it is left out.");
             w.U32((uint)values.Count);
             foreach ((string name, JsonElement value) in values)

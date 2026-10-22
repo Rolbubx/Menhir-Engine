@@ -10,7 +10,8 @@ namespace Menhir.Editor.Playing;
 
 /// <summary>
 /// The Play, Pause and Step buttons: runs the game in the editor (a <see cref="PlaySession"/> on copies
-/// of the build's scenes, starting with the open one). The edited scenes are not touched by the game.
+/// of the build's scenes, starting with the open one, with the compiled C scripts loaded in the editor).
+/// The edited scenes are not touched by the game.
 /// </summary>
 public sealed class PlayMode : IDisposable
 {
@@ -20,6 +21,7 @@ public sealed class PlayMode : IDisposable
     private readonly ScriptManager _scripts;
     private bool _startWhenCompiled;
     private bool _step;
+    private ScriptLibrary? _library;
 
     public PlayMode(EditorContext context, ScriptManager scripts)
     {
@@ -83,10 +85,22 @@ public sealed class PlayMode : IDisposable
         foreach (string warning in warnings)
             Log.Warning(warning);
 
-        _scripts.HoldReload = true;
+        // A fresh copy of the scripts' library for each Play: their globals start as declared.
+        if (_scripts.Current is { } compiled)
+        {
+            try
+            {
+                _library = ScriptLibrary.Load(compiled.LibraryPath);
+            }
+            catch (Exception e) when (e is DllNotFoundException or BadImageFormatException or InvalidDataException or IOException)
+            {
+                Log.Error($"Could not load the scripts: {e.Message}");
+                return;
+            }
+        }
         IsPaused = false;
         Log.Info($"Play mode: {scenes[first].Name}");
-        Session = new PlaySession(scenes, first, project.Settings.Input, _scripts.Current, Write);
+        Session = new PlaySession(scenes, first, project.Settings.Input, _library, Write);
     }
 
     public void Stop()
@@ -96,8 +110,9 @@ public sealed class PlayMode : IDisposable
             return;
         Session.Dispose();
         Session = null;
+        _library?.Dispose();
+        _library = null;
         IsPaused = false;
-        _scripts.HoldReload = false;
         Log.Info("Edit mode");
     }
 

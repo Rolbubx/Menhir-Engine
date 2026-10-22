@@ -156,13 +156,13 @@ static void mh_simulate(const mh_game *game, mh_world *w, const char *path)
             for (int si = 0; si < w->count; si++) {
                 const mh_scene *s = &w->scenes[si].scene;
                 for (int i = 0; i < s->fly_camera_count; i++) {
-                    const mh_entity *e = &s->entities[s->fly_cameras[i].entity];
+                    const mh_entity_data *e = &s->entities[s->fly_cameras[i].entity];
                     float v[9] = { w->scenes[si].fly_yaw[i], w->scenes[si].fly_pitch[i], e->position.x, e->position.y,
                                    e->position.z, e->rotation.x, e->rotation.y, e->rotation.z, e->rotation.w };
                     mh_dump_floats("fly", si * 100 + i, v, 9);
                 }
                 for (int i = 0; i < s->entity_count; i++) {
-                    const mh_entity *e = &s->entities[i];
+                    const mh_entity_data *e = &s->entities[i];
                     float v[10] = { e->position.x, e->position.y, e->position.z, e->rotation.x, e->rotation.y,
                                     e->rotation.z, e->rotation.w, e->scale.x, e->scale.y, e->scale.z };
                     mh_dump_floats("entity", si * 1000 + i, v, 10);

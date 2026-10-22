@@ -6,7 +6,6 @@ using Menhir.Editor.Rendering;
 using Menhir.Editor.Rendering.OpenGL;
 using Menhir.Editor.Assets;
 using Menhir.Editor.Building;
-using Menhir.Editor.Inspector;
 using Menhir.Editor.Playing;
 using Menhir.Editor.Scripting;
 using Menhir.Editor.Commands;
@@ -71,7 +70,6 @@ public sealed class EditorApplication : IDisposable
         _saveSceneDialog = new SaveSceneDialog(_context);
         _build = new BuildRunner(_context);
         _play = new PlayMode(_context, _scripts);
-        _scripts.Reloaded += ScriptDrawer.ClearCache;
         _statusBar = new StatusBar(Log.Messages, ShowConsole);
         _hub = new ProjectHub(_preferences, OpenProject, ProjectLocator.FindSample());
         OpenStartupProject(args);

@@ -1,113 +1,108 @@
-using System.Reflection;
+using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
-using MenhirEngine;
 
 namespace Menhir.Editor.Scripting;
 
-/// <summary>The kinds of script fields the inspector edits and scenes save.</summary>
-public enum ScriptFieldKind
-{
-    Int,
-    Long,
-    Float,
-    Double,
-    Bool,
-    String,
-    Enum,
-    Vector2,
-    Vector3,
-}
-
-/// <summary>A public field of a script class shown in the inspector.</summary>
-public sealed record ScriptField(FieldInfo Field, ScriptFieldKind Kind, float? Min, float? Max, string? Tooltip)
-{
-    public string Name => Field.Name;
-}
-
-/// <summary>Reads script fields and converts their values to and from the scene's JSON.</summary>
+/// <summary>
+/// Script field values: their default, how scenes save them (JSON), and how Play mode writes them into a
+/// script's struct. The built game converts the saved values the same way (mh_scripts.c).
+/// Values are int (Int, and Enum as the option's index), float, bool, Vector2, Vector3, Vector4 (Color) and string.
+/// </summary>
 public static class ScriptFields
 {
-    public static IReadOnlyList<ScriptField> Of(Type scriptType)
+    public static object DefaultValue(ScriptField field) => field.Kind switch
     {
-        var fields = new List<ScriptField>();
-        foreach (FieldInfo field in scriptType.GetFields(BindingFlags.Public | BindingFlags.Instance).OrderBy(f => f.MetadataToken))
-        {
-            if (field.IsInitOnly || field.DeclaringType == typeof(MenhirEngine.Script) ||
-                field.GetCustomAttribute<HideInInspectorAttribute>() != null || KindOf(field.FieldType) is not { } kind)
-                continue;
-            var range = field.GetCustomAttribute<MenhirEngine.RangeAttribute>();
-            fields.Add(new ScriptField(field, kind, range?.min, range?.max, field.GetCustomAttribute<MenhirEngine.TooltipAttribute>()?.tooltip));
-        }
-        return fields;
-    }
+        ScriptFieldKind.Int or ScriptFieldKind.Enum => (int)field.Default[0],
+        ScriptFieldKind.Float => (float)field.Default[0],
+        ScriptFieldKind.Bool => field.Default[0] != 0,
+        ScriptFieldKind.Vector2 => new Vector2((float)field.Default[0], (float)field.Default[1]),
+        ScriptFieldKind.Vector3 => new Vector3((float)field.Default[0], (float)field.Default[1], (float)field.Default[2]),
+        ScriptFieldKind.Color => new Vector4((float)field.Default[0], (float)field.Default[1], (float)field.Default[2], (float)field.Default[3]),
+        _ => field.DefaultText,
+    };
 
-    public static ScriptFieldKind? KindOf(Type type)
-    {
-        if (type.IsEnum) return ScriptFieldKind.Enum;
-        if (type == typeof(int)) return ScriptFieldKind.Int;
-        if (type == typeof(long)) return ScriptFieldKind.Long;
-        if (type == typeof(float)) return ScriptFieldKind.Float;
-        if (type == typeof(double)) return ScriptFieldKind.Double;
-        if (type == typeof(bool)) return ScriptFieldKind.Bool;
-        if (type == typeof(string)) return ScriptFieldKind.String;
-        if (type == typeof(Vector2)) return ScriptFieldKind.Vector2;
-        if (type == typeof(Vector3)) return ScriptFieldKind.Vector3;
-        return null;
-    }
+    /// <summary>The scene's value for the field, or its default when the scene has none or it does not fit.</summary>
+    public static object Value(ScriptField field, IReadOnlyDictionary<string, JsonElement> saved) =>
+        saved.TryGetValue(field.Name, out JsonElement json) && FromJson(field, json) is { } value ? value : DefaultValue(field);
 
-    /// <summary>A field's value as saved in scenes (enums by name, vectors as arrays).</summary>
-    public static JsonElement ToJson(ScriptFieldKind kind, object? value) => kind switch
+    /// <summary>A value as scenes save it: enums by option name, vectors and colors as arrays.</summary>
+    public static JsonElement ToJson(ScriptField field, object value) => field.Kind switch
     {
-        ScriptFieldKind.Enum => JsonSerializer.SerializeToElement(value?.ToString() ?? ""),
-        ScriptFieldKind.Vector2 => JsonSerializer.SerializeToElement(value is Vector2 v ? new[] { v.x, v.y } : new float[2]),
-        ScriptFieldKind.Vector3 => JsonSerializer.SerializeToElement(value is Vector3 v ? new[] { v.x, v.y, v.z } : new float[3]),
+        ScriptFieldKind.Enum => JsonSerializer.SerializeToElement(
+            value is int i && i >= 0 && i < field.Options.Count ? field.Options[i] : (object)value),
+        ScriptFieldKind.Vector2 => JsonSerializer.SerializeToElement(value is Vector2 v ? new[] { v.X, v.Y } : new float[2]),
+        ScriptFieldKind.Vector3 => JsonSerializer.SerializeToElement(value is Vector3 v ? new[] { v.X, v.Y, v.Z } : new float[3]),
+        ScriptFieldKind.Color => JsonSerializer.SerializeToElement(value is Vector4 v ? new[] { v.X, v.Y, v.Z, v.W } : new float[4]),
         _ => JsonSerializer.SerializeToElement(value),
     };
 
-    /// <summary>A saved value converted for a field, or null when it does not fit (the field keeps its default).</summary>
+    /// <summary>A saved value converted for the field, or null when it does not fit (the field keeps its default).</summary>
     public static object? FromJson(ScriptField field, JsonElement json)
     {
-        try
+        switch (field.Kind)
         {
-            Type type = field.Field.FieldType;
-            switch (field.Kind)
-            {
-                case ScriptFieldKind.Enum:
-                    return json.ValueKind == JsonValueKind.String && Enum.TryParse(type, json.GetString(), out object? e) ? e
-                        : json.ValueKind == JsonValueKind.Number ? Enum.ToObject(type, json.GetInt64()) : null;
-                case ScriptFieldKind.Vector2:
+            case ScriptFieldKind.Int:
+                return json.ValueKind == JsonValueKind.Number && json.TryGetInt32(out int i) ? i : null;
+            case ScriptFieldKind.Float:
+                return json.ValueKind == JsonValueKind.Number && json.TryGetSingle(out float f) && float.IsFinite(f) ? f : null;
+            case ScriptFieldKind.Bool:
+                return json.ValueKind is JsonValueKind.True or JsonValueKind.False ? json.GetBoolean() : null;
+            case ScriptFieldKind.String:
+                return json.ValueKind == JsonValueKind.String ? json.GetString() : null;
+            case ScriptFieldKind.Enum:
+                // By name (as the editor saves it), or by index.
+                int index = json.ValueKind == JsonValueKind.String ? field.Options.ToList().IndexOf(json.GetString()!)
+                    : json.ValueKind == JsonValueKind.Number && json.TryGetInt32(out int n) ? n : -1;
+                return index >= 0 && index < field.Options.Count ? index : null;
+            default:
+                int count = field.Kind == ScriptFieldKind.Vector2 ? 2 : field.Kind == ScriptFieldKind.Vector3 ? 3 : 4;
+                if (json.ValueKind != JsonValueKind.Array || json.GetArrayLength() != count)
+                    return null;
+                var v = new float[count];
+                int k = 0;
+                foreach (JsonElement item in json.EnumerateArray())
                 {
-                    float[] a = json.Deserialize<float[]>()!;
-                    return a.Length == 2 ? new Vector2(a[0], a[1]) : null;
+                    if (item.ValueKind != JsonValueKind.Number || !item.TryGetSingle(out v[k]) || !float.IsFinite(v[k]))
+                        return null;
+                    k++;
                 }
-                case ScriptFieldKind.Vector3:
-                {
-                    float[] a = json.Deserialize<float[]>()!;
-                    return a.Length == 3 ? new Vector3(a[0], a[1], a[2]) : null;
-                }
-                default:
-                    return json.Deserialize(type);
-            }
-        }
-        catch (Exception e) when (e is JsonException or InvalidOperationException or FormatException or ArgumentException)
-        {
-            return null;
+                return count == 2 ? new Vector2(v[0], v[1]) : count == 3 ? new Vector3(v[0], v[1], v[2]) : new Vector4(v[0], v[1], v[2], v[3]);
         }
     }
 
-    /// <summary>Sets the saved values on a script instance; returns the names of values that did not fit.</summary>
-    public static List<string> Apply(object script, IReadOnlyDictionary<string, JsonElement> values)
+    /// <summary>
+    /// Writes a value into a script's struct. A string is copied into memory from <paramref name="allocateString"/>,
+    /// which its caller frees when the script goes.
+    /// </summary>
+    public static unsafe void Write(void* script, ScriptField field, object value, Func<string, nint> allocateString)
     {
-        var problems = new List<string>();
-        foreach (ScriptField field in Of(script.GetType()))
+        byte* at = (byte*)script + field.Offset;
+        switch (value)
         {
-            if (!values.TryGetValue(field.Name, out JsonElement json))
-                continue;
-            if (FromJson(field, json) is { } value)
-                field.Field.SetValue(script, value);
-            else
-                problems.Add(field.Name);
+            case int i: *(int*)at = i; break;
+            case float f: *(float*)at = f; break;
+            case bool b: *at = b ? (byte)1 : (byte)0; break;
+            case Vector2 v: *(Vector2*)at = v; break;
+            case Vector3 v: *(Vector3*)at = v; break;
+            case Vector4 v: *(Vector4*)at = v; break;
+            case string s: *(nint*)at = allocateString(s); break;
         }
-        return problems;
+    }
+
+    /// <summary>The value of a field in a script's struct (for tests and debugging).</summary>
+    public static unsafe object Read(void* script, ScriptField field)
+    {
+        byte* at = (byte*)script + field.Offset;
+        return field.Kind switch
+        {
+            ScriptFieldKind.Int or ScriptFieldKind.Enum => *(int*)at,
+            ScriptFieldKind.Float => *(float*)at,
+            ScriptFieldKind.Bool => *at != 0,
+            ScriptFieldKind.Vector2 => *(Vector2*)at,
+            ScriptFieldKind.Vector3 => *(Vector3*)at,
+            ScriptFieldKind.Color => *(Vector4*)at,
+            _ => Marshal.PtrToStringUTF8(*(nint*)at) ?? "",
+        };
     }
 }

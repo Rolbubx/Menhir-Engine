@@ -1,60 +1,39 @@
-/* The game's scripts (MENHIR_SCRIPTS builds): IL2C translates them, with the scripting API
-   (Engine/Scripting) and Menhir.CoreLib, into a C file of its own that gives the m_scripts table
-   (runtime.h). This file creates the scripts of each loaded scene, gives them the values the scene
-   saved, runs their callbacks, and implements the API's internal calls (MenhirEngine.Host), like
-   the editor's Play mode (Runtime/PlaySession.cs). An exception a callback does not catch is logged
-   and the frame goes on. */
+/* The game's scripts (MENHIR_SCRIPTS builds): the project's .c files and the API's menhir_script.c
+   (Engine/Scripting) are compiled with the player. This file gives them the engine (the mh_api table,
+   see menhir_abi.h), creates the scripts of each loaded scene with the values the scene saved, and
+   runs their callbacks, like the editor's Play mode (Runtime/PlaySession.cs). */
 #include <errno.h>
-#include <setjmp.h>
 #include <stdlib.h>
 #include <string.h>
-#include <menhir/runtime.h>
+#include <menhir_abi.h>
+
+/* From menhir_script.c. */
+void mh_bind(const mh_api *api);
+int32_t mh_script_type_count(void);
+const mh_script_type *mh_script_type_at(int32_t index);
 
 static mh_world *mh_host_world;
 static const mh_input *mh_host_input; /* this frame's (empty while the first scene loads) */
 static mh_input mh_no_input;
 
-static const char *const mh_callback_names[] = { "Awake", "Start", "Update", "LateUpdate" };
-
-/* "Game.Player" -> "Player", "Game.Outer+Inner" -> "Inner" (.NET's Type.Name). */
-static const char *mh_short_name(const char *name)
+static const mh_script_type *mh_find_script_type(const char *name)
 {
-    const char *dot = strrchr(name, '.'), *plus = strrchr(name, '+');
-    const char *last = dot > plus ? dot : plus;
-    return last ? last + 1 : name;
-}
-
-static void mh_log_exception(const char *class_name, const char *method, const char *entity, MObject *exception)
-{
-    char *message = m_string_to_utf8(m_exception_message(exception));
-    mh_log(MH_LOG_ERROR, "%s.%s on '%s': %s: %s", mh_short_name(class_name), method, entity,
-           mh_short_name(exception->type->name), message);
-    free(message);
-}
-
-static int mh_script_enabled(MObject *script)
-{
-    return *(const bool *)((const char *)script + m_scripts.enabledOffset);
-}
-
-static const MScriptClass *mh_script_class(const char *name)
-{
-    for (uint32_t i = 0; i < m_scripts.classCount; i++)
-        if (!strcmp(m_scripts.classes[i].name, name))
-            return &m_scripts.classes[i];
+    for (int32_t i = 0; i < mh_script_type_count(); i++)
+        if (!strcmp(mh_script_type_at(i)->name, name))
+            return mh_script_type_at(i);
     return NULL;
 }
 
-/* ---- Saved values: converted to the field's type like the editor's ScriptFields.FromJson ---- */
+/* ---- Saved values: converted to the field's kind like the editor's ScriptFields.FromJson ---- */
 
-static int mh_parse_integer(const char *text, int64_t min, int64_t max, int64_t *out)
+static int mh_parse_int(const char *text, int32_t *out)
 {
     char *end;
     errno = 0;
     long long v = strtoll(text, &end, 10);
-    if (end == text || *end || errno == ERANGE || v < min || v > max)
+    if (end == text || *end || errno == ERANGE || v < INT32_MIN || v > INT32_MAX)
         return 0;
-    *out = v;
+    *out = (int32_t)v;
     return 1;
 }
 
@@ -68,189 +47,165 @@ static int mh_parse_float(const char *text, float *out)
     return 1;
 }
 
-static int mh_parse_double(const char *text, double *out)
+static void mh_set_string(mh_loaded_scene *s, void *at, const char *text)
 {
-    char *end;
-    double v = strtod(text, &end);
-    if (end == text || *end || !isfinite(v))
-        return 0;
-    *out = v;
-    return 1;
+    size_t length = strlen(text);
+    char *copy = mh_alloc(length + 1);
+    memcpy(copy, text, length);
+    s->strings = realloc(s->strings, sizeof(char *) * (size_t)(s->string_count + 1));
+    if (!s->strings)
+        mh_fatal("%s", "out of memory");
+    s->strings[s->string_count++] = copy;
+    memcpy(at, &copy, sizeof copy);
 }
 
-static void mh_store_integer(void *at, uint32_t size, int64_t value)
+/* The field's default from its declaration. */
+static void mh_apply_default(mh_loaded_scene *s, void *script, const mh_field *f)
 {
-    switch (size) {
-    case 1: { int8_t v = (int8_t)value; memcpy(at, &v, 1); break; }
-    case 2: { int16_t v = (int16_t)value; memcpy(at, &v, 2); break; }
-    case 8: memcpy(at, &value, 8); break;
-    default: { int32_t v = (int32_t)value; memcpy(at, &v, 4); break; }
+    char *at = (char *)script + f->offset;
+    float v[4];
+    for (int i = 0; i < 4; i++)
+        v[i] = (float)f->number[i];
+    switch (f->kind) {
+    case MH_FIELD_INT:
+    case MH_FIELD_ENUM: {
+        int32_t i = (int32_t)f->number[0];
+        memcpy(at, &i, 4);
+        break;
     }
-}
-
-/* An enum constant by name: its value (sign extended when the enum is signed). */
-static int mh_enum_value(const MType *type, const char *name, int64_t *out)
-{
-    const MEnumInfo *info = type->enumInfo;
-    if (!info)
-        return 0;
-    for (uint32_t i = 0; i < info->count; i++) {
-        if (strcmp(info->names[i], name))
-            continue;
-        uint64_t bits = info->values[i];
-        uint32_t size = type->instanceSize;
-        if (info->isSigned && size < 8) {
-            int shift = 64 - 8 * (int)size;
-            *out = (int64_t)(bits << shift) >> shift;
-        } else
-            *out = (int64_t)bits;
-        return 1;
+    case MH_FIELD_FLOAT: memcpy(at, v, 4); break;
+    case MH_FIELD_BOOL: *(unsigned char *)at = f->number[0] != 0; break;
+    case MH_FIELD_VEC2: memcpy(at, v, 8); break;
+    case MH_FIELD_VEC3: memcpy(at, v, 12); break;
+    case MH_FIELD_COLOR: memcpy(at, v, 16); break;
+    case MH_FIELD_STRING: mh_set_string(s, at, f->text ? f->text : ""); break;
     }
-    return 0;
 }
 
 /* Returns 0 when the value does not fit the field (which then keeps its default). */
-static int mh_apply_value(MObject *script, const MScriptField *field, const mh_script_value *value)
+static int mh_apply_value(mh_loaded_scene *s, void *script, const mh_field *f, const mh_script_value *value)
 {
-    void *at = (char *)script + field->offset;
-    int64_t integer;
-    switch (field->kind) {
-    case M_FIELD_INT:
-    case M_FIELD_LONG:
-        if (value->kind != MH_VALUE_NUMBER ||
-            !mh_parse_integer(value->text, field->kind == M_FIELD_INT ? INT32_MIN : INT64_MIN,
-                              field->kind == M_FIELD_INT ? INT32_MAX : INT64_MAX, &integer))
+    char *at = (char *)script + f->offset;
+    int32_t i;
+    float v[4];
+    switch (f->kind) {
+    case MH_FIELD_INT:
+        if (value->kind != MH_VALUE_NUMBER || !mh_parse_int(value->text, &i))
             return 0;
-        mh_store_integer(at, field->size, integer);
+        memcpy(at, &i, 4);
         return 1;
-    case M_FIELD_FLOAT: {
-        float f;
-        if (value->kind != MH_VALUE_NUMBER || !mh_parse_float(value->text, &f))
+    case MH_FIELD_FLOAT:
+        if (value->kind != MH_VALUE_NUMBER || !mh_parse_float(value->text, &v[0]))
             return 0;
-        memcpy(at, &f, 4);
+        memcpy(at, v, 4);
         return 1;
-    }
-    case M_FIELD_DOUBLE: {
-        double d;
-        if (value->kind != MH_VALUE_NUMBER || !mh_parse_double(value->text, &d))
-            return 0;
-        memcpy(at, &d, 8);
-        return 1;
-    }
-    case M_FIELD_BOOL:
+    case MH_FIELD_BOOL:
         if (value->kind != MH_VALUE_BOOL)
             return 0;
-        *(bool *)at = value->boolean != 0;
+        *(unsigned char *)at = value->boolean != 0;
         return 1;
-    case M_FIELD_STRING:
-        if (value->kind != MH_VALUE_STRING)
-            return 0;
-        *(MString **)at = m_string_from_utf8(value->text);
-        return 1;
-    case M_FIELD_ENUM:
-        /* By name (as the editor saves it), or by number. */
-        if (value->kind == MH_VALUE_STRING ? !mh_enum_value(field->enumType, value->text, &integer)
-            : value->kind != MH_VALUE_NUMBER || !mh_parse_integer(value->text, INT64_MIN, INT64_MAX, &integer))
-            return 0;
-        mh_store_integer(at, field->size, integer);
-        return 1;
-    case M_FIELD_VECTOR2:
-    case M_FIELD_VECTOR3: {
-        int n = field->kind == M_FIELD_VECTOR2 ? 2 : 3;
-        float v[3];
+    case MH_FIELD_VEC2:
+    case MH_FIELD_VEC3:
+    case MH_FIELD_COLOR: {
+        int n = f->kind == MH_FIELD_VEC2 ? 2 : f->kind == MH_FIELD_VEC3 ? 3 : 4;
         if (value->kind != MH_VALUE_NUMBERS || value->count != n)
             return 0;
-        for (int i = 0; i < n; i++)
-            if (!mh_parse_float(value->items[i], &v[i]))
+        for (int k = 0; k < n; k++)
+            if (!mh_parse_float(value->items[k], &v[k]))
                 return 0;
         memcpy(at, v, sizeof(float) * (size_t)n);
         return 1;
     }
+    case MH_FIELD_STRING:
+        if (value->kind != MH_VALUE_STRING)
+            return 0;
+        mh_set_string(s, at, value->text);
+        return 1;
+    case MH_FIELD_ENUM:
+        /* By name (as the editor saves it), or by index. */
+        if (value->kind == MH_VALUE_STRING) {
+            for (i = 0; i < f->option_count && strcmp(f->options[i], value->text); i++)
+                ;
+        } else if (value->kind != MH_VALUE_NUMBER || !mh_parse_int(value->text, &i))
+            return 0;
+        if (i < 0 || i >= f->option_count)
+            return 0;
+        memcpy(at, &i, 4);
+        return 1;
     }
     return 0;
 }
 
 /* ---- Lifecycle ----------------------------------------------------------------------------- */
 
-/* Runs one callback; an exception it throws is logged. */
-static void mh_script_call(mh_loaded_scene *s, int i, int callback)
+static mh_callback mh_callback_of(const mh_script_type *type, int callback)
 {
-    MObject *volatile script = s->scripts[i];
-    void (*method)(MObject *) = (void (*)(MObject *))script->type->vtable[m_scripts.slots[callback]];
-    MFrame frame;
-    m_push_frame(&frame);
-    if (!setjmp(frame.jump)) {
-        method(script);
-        m_pop_frame(&frame);
-        return;
+    switch (callback) {
+    case MH_AWAKE: return type->awake;
+    case MH_START: return type->start;
+    case MH_UPDATE: return type->update;
+    default: return type->late_update;
     }
-    /* m_throw popped the frame. */
-    const mh_script_data *d = &s->scene.scripts[i];
-    mh_log_exception(d->class_name, mh_callback_names[callback], s->scene.entity_names[d->entity], frame.exception);
 }
 
-static MObject *mh_script_create(const MScriptClass *type, const mh_script_data *d, const char *entity)
-{
-    MFrame frame;
-    m_push_frame(&frame);
-    if (setjmp(frame.jump)) {
-        mh_log_exception(d->class_name, ".ctor", entity, frame.exception);
-        return NULL;
-    }
-    MObject *script = type->create();
-    m_pop_frame(&frame);
-    return script;
-}
+static int32_t mh_handle(const mh_loaded_scene *s, int entity) { return (s->serial & 0x7FFF) << 16 | entity; }
 
 static void mh_scripts_load(mh_world *w, mh_loaded_scene *s)
 {
-    (void)w;
     int count = s->scene.script_count;
-    s->scripts = m_alloc_roots(sizeof(MObject *) * (size_t)maxi(1, count));
+    s->types = mh_alloc(sizeof(*s->types) * (size_t)maxi(1, count));
+    s->scripts = mh_alloc(sizeof(void *) * (size_t)maxi(1, count));
     s->started = mh_alloc((size_t)maxi(1, count));
     for (int i = 0; i < count; i++) {
         const mh_script_data *d = &s->scene.scripts[i];
         const char *entity = s->scene.entity_names[d->entity];
-        const MScriptClass *type = mh_script_class(d->class_name);
+        const mh_script_type *type = mh_find_script_type(d->script_name);
         if (!type) {
-            mh_log(MH_LOG_WARNING, "%s: the script %s does not exist (or does not compile).", entity, d->class_name);
+            mh_log(MH_LOG_WARNING, "%s: the script %s does not exist.", entity, d->script_name);
             continue;
         }
-        MObject *script = mh_script_create(type, d, entity);
-        if (!script)
-            continue;
-        for (uint32_t f = 0; f < type->fieldCount; f++) {
+        void *script = mh_alloc(type->size);
+        for (int32_t f = 0; f < type->field_count; f++) {
+            const mh_field *field = &type->fields[f];
+            mh_apply_default(s, script, field);
             for (int v = 0; v < d->value_count; v++) {
-                const mh_script_value *value = &d->values[v];
-                if (strcmp(type->fields[f].name, value->name))
+                if (strcmp(field->name, d->values[v].name))
                     continue;
-                if (!mh_apply_value(script, &type->fields[f], value))
+                if (!mh_apply_value(s, script, field, &d->values[v]))
                     mh_log(MH_LOG_WARNING, "%s: the saved value of %s.%s does not fit the field; it keeps its default.",
-                           entity, d->class_name, value->name);
+                           entity, d->script_name, field->name);
                 break;
             }
         }
-        *(int32_t *)((char *)script + m_scripts.entityOffset) = (s->serial & 0x7FFF) << 16 | d->entity;
+        s->types[i] = type;
         s->scripts[i] = script;
     }
     mh_host_world = w;
     if (!mh_host_input)
         mh_host_input = &mh_no_input;
     for (int i = 0; i < count; i++)
-        if (s->scripts[i])
-            mh_script_call(s, i, MH_AWAKE);
+        if (s->types[i] && s->types[i]->awake)
+            s->types[i]->awake(s->scripts[i], mh_handle(s, s->scene.scripts[i].entity));
 }
 
 static void mh_scripts_unload(mh_loaded_scene *s)
 {
-    if (s->scripts)
-        m_free_roots(s->scripts);
+    for (int i = 0; i < s->scene.script_count && s->scripts; i++)
+        free(s->scripts[i]);
+    for (int i = 0; i < s->string_count; i++)
+        free(s->strings[i]);
+    free((void *)s->types);
+    free(s->scripts);
     free(s->started);
+    free(s->strings);
+    s->types = NULL;
     s->scripts = NULL;
     s->started = NULL;
+    s->strings = NULL;
+    s->string_count = 0;
 }
 
-/* Start runs once, before a script's first Update, on the first frame its script is enabled. */
+/* Start runs once, before a script's first Update. */
 static void mh_scripts_run(mh_world *w, const mh_input *input, int callback)
 {
     mh_host_world = w;
@@ -258,8 +213,7 @@ static void mh_scripts_run(mh_world *w, const mh_input *input, int callback)
     for (int si = 0; si < w->count; si++) {
         mh_loaded_scene *s = &w->scenes[si];
         for (int i = 0; i < s->scene.script_count; i++) {
-            MObject *script = s->scripts[i];
-            if (!script || !mh_script_enabled(script))
+            if (!s->types[i])
                 continue;
             if (callback == MH_START) {
                 if (s->started[i])
@@ -267,12 +221,14 @@ static void mh_scripts_run(mh_world *w, const mh_input *input, int callback)
                 s->started[i] = 1;
             } else if (!s->started[i])
                 continue;
-            mh_script_call(s, i, callback);
+            mh_callback function = mh_callback_of(s->types[i], callback);
+            if (function)
+                function(s->scripts[i], mh_handle(s, s->scene.scripts[i].entity));
         }
     }
 }
 
-/* ---- MenhirEngine.Host: the internal calls of the scripting API ---------------------------- */
+/* ---- The engine for the scripts (mh_api) --------------------------------------------------- */
 
 static mh_loaded_scene *mh_resolve(int32_t handle, int *index)
 {
@@ -291,151 +247,142 @@ static mh_loaded_scene *mh_resolve(int32_t handle, int *index)
     return NULL;
 }
 
-static mh_entity *mh_entity_of(int32_t handle, mh_loaded_scene **scene)
+static mh_entity_data *mh_entity_of(int32_t handle, mh_loaded_scene **scene)
 {
     int index;
     mh_loaded_scene *s = mh_resolve(handle, &index);
-    if (!s)
-        m_throw_named("System.InvalidOperationException", "This entity is not in a loaded scene any more.");
+    if (!s) {
+        mh_log(MH_LOG_ERROR, "Entity %d is not in a loaded scene.", (int)handle);
+        return NULL;
+    }
     if (scene)
         *scene = s;
     return &s->scene.entities[index];
 }
 
-float MenhirEngine_Host__GetFloat(int32_t entity, int32_t property)
+static void mh_api_get_transform(int32_t entity, int32_t what, float *out)
 {
-    mh_entity *e = mh_entity_of(entity, NULL);
-    float v[10] = { e->position.x, e->position.y, e->position.z, e->rotation.x, e->rotation.y, e->rotation.z,
-                    e->rotation.w, e->scale.x, e->scale.y, e->scale.z };
-    return v[property >= 0 && property < 10 ? property : 9];
+    mh_entity_data *e = mh_entity_of(entity, NULL);
+    if (!e) {
+        /* Zero position, identity rotation, unit scale. */
+        out[0] = out[1] = out[2] = what == 2 ? 1.0f : 0.0f;
+        if (what == 1)
+            out[3] = 1.0f;
+        return;
+    }
+    if (what == 0)
+        memcpy(out, &e->position, sizeof(float) * 3);
+    else if (what == 1)
+        memcpy(out, &e->rotation, sizeof(float) * 4);
+    else
+        memcpy(out, &e->scale, sizeof(float) * 3);
 }
 
-void MenhirEngine_Host__SetFloat(int32_t entity, int32_t property, float value)
+static void mh_api_set_transform(int32_t entity, int32_t what, const float *values)
 {
-    mh_entity *e = mh_entity_of(entity, NULL);
-    float *fields[10] = { &e->position.x, &e->position.y, &e->position.z, &e->rotation.x, &e->rotation.y,
-                          &e->rotation.z, &e->rotation.w, &e->scale.x, &e->scale.y, &e->scale.z };
-    *fields[property >= 0 && property < 10 ? property : 9] = value;
+    mh_entity_data *e = mh_entity_of(entity, NULL);
+    if (!e)
+        return;
+    if (what == 0)
+        memcpy(&e->position, values, sizeof(float) * 3);
+    else if (what == 1)
+        memcpy(&e->rotation, values, sizeof(float) * 4);
+    else
+        memcpy(&e->scale, values, sizeof(float) * 3);
 }
 
-int32_t MenhirEngine_Host__GetParent(int32_t entity)
+static int32_t mh_api_get_parent(int32_t entity)
 {
     int index;
     mh_loaded_scene *s = mh_resolve(entity, &index);
     if (!s || s->scene.entities[index].parent < 0)
         return -1;
-    return (s->serial & 0x7FFF) << 16 | s->scene.entities[index].parent;
+    return mh_handle(s, s->scene.entities[index].parent);
 }
 
-MString *MenhirEngine_Host__GetName(int32_t entity)
+static const char *mh_api_get_name(int32_t entity)
 {
     mh_loaded_scene *s;
-    mh_entity *e = mh_entity_of(entity, &s);
-    return m_string_from_utf8(s->scene.entity_names[e - s->scene.entities]);
+    mh_entity_data *e = mh_entity_of(entity, &s);
+    return e ? s->scene.entity_names[e - s->scene.entities] : "";
 }
 
-int32_t MenhirEngine_Host__FindEntity(MString *name)
+static int32_t mh_api_find(const char *name)
 {
-    char *text = m_string_to_utf8(name);
-    int32_t found = -1;
-    for (int si = 0; si < mh_host_world->count && found < 0; si++) {
-        mh_loaded_scene *s = &mh_host_world->scenes[si];
-        for (int i = 0; i < s->scene.entity_count; i++) {
-            if (!strcmp(s->scene.entity_names[i], text)) {
-                found = (s->serial & 0x7FFF) << 16 | i;
-                break;
-            }
-        }
+    for (int si = 0; si < mh_host_world->count; si++) {
+        const mh_loaded_scene *s = &mh_host_world->scenes[si];
+        for (int i = 0; i < s->scene.entity_count; i++)
+            if (!strcmp(s->scene.entity_names[i], name))
+                return mh_handle(s, i);
     }
-    free(text);
-    return found;
+    return -1;
 }
 
-int32_t MenhirEngine_Host__GetScriptCount(int32_t entity)
-{
-    int index, count = 0;
-    mh_loaded_scene *s = mh_resolve(entity, &index);
-    for (int i = 0; s && i < s->scene.script_count; i++)
-        count += s->scene.scripts[i].entity == index && s->scripts[i];
-    return count;
-}
-
-MObject *MenhirEngine_Host__GetScript(int32_t entity, int32_t which)
+static void *mh_api_get_script(int32_t entity, const char *type)
 {
     int index;
     mh_loaded_scene *s = mh_resolve(entity, &index);
     for (int i = 0; s && i < s->scene.script_count; i++)
-        if (s->scene.scripts[i].entity == index && s->scripts[i] && which-- == 0)
+        if (s->scene.scripts[i].entity == index && s->types[i] && !strcmp(s->types[i]->name, type))
             return s->scripts[i];
     return NULL;
 }
 
-float MenhirEngine_Host__GetAxis(MString *name, bool raw)
+static float mh_api_get_axis(const char *name, int32_t raw)
 {
-    char *text = m_string_to_utf8(name);
-    float v = raw ? mh_get_axis_raw(mh_host_input, text) : mh_get_axis(mh_host_input, text);
-    free(text);
-    return v;
+    return raw ? mh_get_axis_raw(mh_host_input, name) : mh_get_axis(mh_host_input, name);
 }
 
-bool MenhirEngine_Host__GetButton(MString *name, int32_t which)
+static int32_t mh_api_get_button(const char *name, int32_t which)
 {
-    char *text = m_string_to_utf8(name);
-    int v = which == 0 ? mh_get_button(mh_host_input, text)
-          : which == 1 ? mh_get_button_down(mh_host_input, text) : mh_get_button_up(mh_host_input, text);
-    free(text);
-    return v != 0;
+    return which == 0 ? mh_get_button(mh_host_input, name)
+         : which == 1 ? mh_get_button_down(mh_host_input, name) : mh_get_button_up(mh_host_input, name);
 }
 
-bool MenhirEngine_Host__GetKey(MString *name, int32_t which)
+static int32_t mh_api_get_key(const char *name, int32_t which)
 {
-    char *text = m_string_to_utf8(name);
-    int code = mh_key_code(text);
+    int code = mh_key_code(name);
     if (code < 0) {
-        char message[160];
-        snprintf(message, sizeof message, "Input Key named: %.100s is unknown", text);
-        free(text);
-        m_throw_named("System.ArgumentException", message);
+        mh_log(MH_LOG_ERROR, "There is no key named '%s'.", name);
+        return 0;
     }
-    free(text);
-    int v = which == 0 ? mh_get_key(mh_host_input, code)
-          : which == 1 ? mh_get_key_down(mh_host_input, code) : mh_get_key_up(mh_host_input, code);
-    return v != 0;
+    return which == 0 ? mh_get_key(mh_host_input, code)
+         : which == 1 ? mh_get_key_down(mh_host_input, code) : mh_get_key_up(mh_host_input, code);
 }
 
-float MenhirEngine_Host__GetMouse(int32_t axis)
+static void mh_api_get_mouse_position(float *out)
 {
-    return axis == 0 ? mh_host_input->current.mouse_x : mh_host_input->current.mouse_y;
+    out[0] = mh_host_input->current.mouse_x;
+    out[1] = mh_host_input->current.mouse_y;
 }
 
-float MenhirEngine_Host__GetTime(int32_t which)
+static float mh_api_get_time(int32_t which)
 {
     return which == 0 ? mh_host_world->delta_time : which == 1 ? mh_host_world->time : (float)mh_host_world->frame_count;
 }
 
-void MenhirEngine_Host__Log(int32_t level, MString *message)
+static void mh_api_log(int32_t level, const char *message)
 {
-    char *text = m_string_to_utf8(message);
-    mh_log(level == 0 ? MH_LOG_INFO : level == 1 ? MH_LOG_WARNING : MH_LOG_ERROR, "%s", text);
-    free(text);
+    mh_log(level == 0 ? MH_LOG_INFO : level == 1 ? MH_LOG_WARNING : MH_LOG_ERROR, "%s", message);
 }
 
-bool MenhirEngine_Host__LoadScene(MString *name, int32_t index, int32_t mode)
+static int32_t mh_api_load_scene(const char *name, int32_t index, int32_t mode)
 {
-    int target = index;
-    if (name) {
-        char *text = m_string_to_utf8(name);
-        target = mh_find_scene(mh_host_world->game, text);
-        free(text);
-    }
+    int target = name ? mh_find_scene(mh_host_world->game, name) : index;
     if (target < 0 || target >= mh_host_world->game->scene_count)
-        return false;
+        return 0;
     mh_host_world->request_scene = target;
-    mh_host_world->request_mode = mode;
-    return true;
+    mh_host_world->request_mode = mode == MH_LOAD_ADDITIVE ? MH_LOAD_ADDITIVE : MH_LOAD_SINGLE;
+    return 1;
 }
 
-void MenhirEngine_Host__Quit(void)
-{
-    mh_host_world->quit = 1;
-}
+static void mh_api_quit(void) { mh_host_world->quit = 1; }
+
+static const mh_api mh_native_api = {
+    mh_api_get_transform, mh_api_set_transform, mh_api_get_parent, mh_api_get_name, mh_api_find,
+    mh_api_get_script, mh_api_get_axis, mh_api_get_button, mh_api_get_key, mh_api_get_mouse_position,
+    mh_api_get_time, mh_api_log, mh_api_load_scene, mh_api_quit,
+};
+
+/* Before the first scene loads. */
+static void mh_scripts_init(void) { mh_bind(&mh_native_api); }

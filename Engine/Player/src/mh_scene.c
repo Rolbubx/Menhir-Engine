@@ -28,7 +28,7 @@ typedef struct {
     vec3 background;
 } mh_view;
 
-static mat4 mh_local_matrix(const mh_entity *e)
+static mat4 mh_local_matrix(const mh_entity_data *e)
 {
     return m4_mul(m4_mul(m4_scale(e->scale), m4_from_quat(e->rotation)), m4_translation(e->position));
 }

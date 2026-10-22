@@ -1,166 +1,123 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Menhir.Editor.Projects;
 
 namespace Menhir.Editor.Scripting;
 
 /// <summary>A compiler message about a script.</summary>
-public sealed record ScriptDiagnostic(string File, int Line, int Column, string Code, string Message, bool IsError)
+public sealed record ScriptDiagnostic(string File, int Line, int Column, string Message, bool IsError)
 {
-    public override string ToString() => $"{File}({Line},{Column}): {(IsError ? "error" : "warning")} {Code}: {Message}";
+    public override string ToString() =>
+        File.Length > 0 ? $"{File}:{Line}:{Column}: {(IsError ? "error" : "warning")}: {Message}" : Message;
 }
 
-public sealed record ScriptCompileResult(bool Success, string? AssemblyPath, IReadOnlyList<ScriptDiagnostic> Diagnostics, string Output)
+public sealed record ScriptCompileResult(bool Success, string? LibraryPath, IReadOnlyList<ScriptDiagnostic> Diagnostics, string Output)
 {
     public IEnumerable<ScriptDiagnostic> Errors => Diagnostics.Where(d => d.IsError);
 }
 
 /// <summary>
-/// Compiles the project's scripts (every .cs file in Assets/) with the .NET SDK (<c>dotnet build</c>
-/// of a project generated in Cache/Scripts): for the editor (.NET, Menhir.Engine) or for the built
-/// game (Menhir.CoreLib and Menhir.Engine.Native, then IL2C).
+/// The project's scripts are its .c files in Assets/ (see Docs/Scripting.md). For Play mode they are
+/// compiled, with the API's menhir_script.c, into a shared library the editor loads (see
+/// <see cref="ScriptLibrary"/>), with the compiler of Project Settings → Build; the built game compiles
+/// the same files with the player.
 /// </summary>
 public static partial class ScriptCompiler
 {
-    public const string AssemblyName = "GameScripts";
-
-    public static IEnumerable<string> ScriptFiles(Project project) =>
-        Directory.Exists(project.Assets.AssetsDirectory)
-            ? Directory.EnumerateFiles(project.Assets.AssetsDirectory, "*.cs", SearchOption.AllDirectories)
-                .Where(f => !Path.GetFileName(f).StartsWith('.'))
-            : [];
+    public static IEnumerable<string> ScriptFiles(Project project) => Files(project, "*.c");
 
     public static bool HasScripts(Project project) => ScriptFiles(project).Any();
 
-    /// <summary>The newest write time of the scripts (to know when to compile again).</summary>
+    /// <summary>The newest write time of the scripts and their headers (to know when to compile again).</summary>
     public static DateTime LastChange(Project project) =>
-        ScriptFiles(project).Select(File.GetLastWriteTimeUtc).DefaultIfEmpty(DateTime.MinValue).Max();
+        Files(project, "*.c").Concat(Files(project, "*.h")).Select(File.GetLastWriteTimeUtc)
+            .DefaultIfEmpty(DateTime.MinValue).Max();
 
-    /// <param name="engineAssembly">Menhir.Engine.dll (the editor's).</param>
-    public static ScriptCompileResult CompileForEditor(Project project, string engineAssembly) =>
-        Compile(project, "Editor", $"""
-            <TargetFramework>net10.0</TargetFramework>
-            """, [engineAssembly]);
+    /// <summary>Engine/Scripting/src/menhir_script.c, the part of the API compiled with the scripts.</summary>
+    public static string ApiSource(string engineDirectory) => Path.Combine(engineDirectory, "Scripting", "src", "menhir_script.c");
 
-    /// <param name="coreLib">Menhir.CoreLib.dll.</param>
-    /// <param name="engineAssembly">Menhir.Engine.dll built by Menhir.Engine.Native.csproj.</param>
-    public static ScriptCompileResult CompileForGame(Project project, string coreLib, string engineAssembly) =>
-        Compile(project, "Game", """
-            <TargetFramework>net10.0</TargetFramework>
-            <NoStdLib>true</NoStdLib>
-            <NoCompilerStandardLib>true</NoCompilerStandardLib>
-            <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
-            <RuntimeMetadataVersion>v4.0.30319</RuntimeMetadataVersion>
-            <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-            <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
-            <DefineConstants>$(DefineConstants);MENHIR_NATIVE</DefineConstants>
-            """, [coreLib, engineAssembly]);
+    /// <summary>Engine/Scripting/include: menhir.h and menhir_abi.h.</summary>
+    public static string ApiInclude(string engineDirectory) => Path.Combine(engineDirectory, "Scripting", "include");
 
-    private static ScriptCompileResult Compile(Project project, string flavour, string properties, string[] references)
+    public static string LibraryExtension =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".dll" :
+        RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? ".dylib" : ".so";
+
+    private static IEnumerable<string> Files(Project project, string pattern) =>
+        Directory.Exists(project.Assets.AssetsDirectory)
+            ? Directory.EnumerateFiles(project.Assets.AssetsDirectory, pattern, SearchOption.AllDirectories)
+                .Where(f => !Path.GetFileName(f).StartsWith('.'))
+                .Order(StringComparer.Ordinal)
+            : [];
+
+    /// <summary>Compiles the scripts into <paramref name="library"/> (a shared library).</summary>
+    /// <param name="engineDirectory">The repository's Engine/ folder.</param>
+    public static ScriptCompileResult CompileLibrary(Project project, string engineDirectory, string library)
     {
-        string directory = Path.Combine(project.CacheDirectory, "Scripts", flavour);
-        Directory.CreateDirectory(directory);
-        string assets = Path.GetFullPath(project.Assets.AssetsDirectory);
-        string csproj = Path.Combine(directory, AssemblyName + ".csproj");
-        string referenceItems = string.Join("\n", references.Select(r =>
-            $"""    <Reference Include="{Path.GetFileNameWithoutExtension(r)}"><HintPath>{Escape(Path.GetFullPath(r))}</HintPath><Private>false</Private></Reference>"""));
-        string content = $"""
-            <Project Sdk="Microsoft.NET.Sdk">
-              <!-- Generated by the Menhir editor: the project's scripts. Do not edit. -->
-              <PropertyGroup>
-                {properties}
-                <AssemblyName>{AssemblyName}</AssemblyName>
-                <OutputType>Library</OutputType>
-                <ImplicitUsings>disable</ImplicitUsings>
-                <Nullable>disable</Nullable>
-                <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-                <OutputPath>bin/</OutputPath>
-                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-                <GenerateDocumentationFile>false</GenerateDocumentationFile>
-                <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-                <NoWarn>$(NoWarn);CS0649;CS0169;CS0414</NoWarn>
-              </PropertyGroup>
-              <ItemGroup>
-                <Compile Include="{Escape(assets)}/**/*.cs" />
-            {referenceItems}
-              </ItemGroup>
-            </Project>
-            """;
-        if (!File.Exists(csproj) || File.ReadAllText(csproj) != content)
-            File.WriteAllText(csproj, content);
+        string compiler = string.IsNullOrWhiteSpace(project.Settings.Build.Compiler) ? "cc" : project.Settings.Build.Compiler.Trim();
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(library))!);
+        var arguments = new List<string>
+        {
+            // The game's flags (PlayerBuilder), so Play mode computes what the game does.
+            "-std=gnu11", "-Wall", "-ffp-contract=off", "-O1", "-g", "-shared", "-DMH_BUILD_LIBRARY",
+            "-I", ApiInclude(engineDirectory),
+        };
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            arguments.Add("-fPIC");
+        arguments.AddRange(ScriptFiles(project));
+        arguments.AddRange([ApiSource(engineDirectory), "-o", library, "-lm"]);
 
+        var start = new ProcessStartInfo(compiler) { RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (string argument in arguments)
+            start.ArgumentList.Add(argument);
         string output;
         int exitCode;
         try
         {
-            (exitCode, output) = RunDotnet(["build", csproj, "-nologo", "-v", "q", "-clp:NoSummary", "-p:UseSharedCompilation=false"], directory);
+            using Process process = Process.Start(start) ?? throw new IOException($"{compiler} did not start.");
+            Task<string> errors = process.StandardError.ReadToEndAsync();
+            output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            output += errors.Result;
+            exitCode = process.ExitCode;
         }
         catch (System.ComponentModel.Win32Exception e)
         {
             return new ScriptCompileResult(false, null,
-                [new ScriptDiagnostic("", 0, 0, "", $"The .NET SDK (dotnet) is needed to compile scripts: {e.Message}", true)], "");
+                [new ScriptDiagnostic("", 0, 0, $"Could not start the C compiler '{compiler}' ({e.Message}). Install GCC or Clang, " +
+                                                "or set the compiler in Project Settings → Build.", true)], "");
         }
 
-        List<ScriptDiagnostic> diagnostics = ParseDiagnostics(output, assets);
-        string dll = Path.Combine(directory, "bin", AssemblyName + ".dll");
-        bool success = exitCode == 0 && File.Exists(dll);
+        List<ScriptDiagnostic> diagnostics = ParseDiagnostics(output, project.RootPath);
+        bool success = exitCode == 0 && File.Exists(library);
         if (!success && !diagnostics.Any(d => d.IsError))
-            diagnostics.Add(new ScriptDiagnostic("", 0, 0, "", "The scripts could not be compiled:\n" + output.Trim(), true));
-        return new ScriptCompileResult(success, success ? dll : null, diagnostics, output);
+            diagnostics.Add(new ScriptDiagnostic("", 0, 0, "The scripts could not be compiled:\n" + output.Trim(), true));
+        return new ScriptCompileResult(success, success ? library : null, diagnostics, output);
     }
 
-    /// <summary>Runs the .NET SDK; returns its exit code and output (stdout then stderr).</summary>
-    /// <exception cref="System.ComponentModel.Win32Exception">dotnet could not be started.</exception>
-    public static (int ExitCode, string Output) RunDotnet(IEnumerable<string> arguments, string workingDirectory)
-    {
-        var start = new ProcessStartInfo(DotnetPath()) { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = workingDirectory };
-        foreach (string argument in arguments)
-            start.ArgumentList.Add(argument);
-        start.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
-        start.Environment["DOTNET_NOLOGO"] = "1";
-        using Process process = Process.Start(start) ?? throw new IOException("dotnet did not start.");
-        Task<string> errors = process.StandardError.ReadToEndAsync();
-        string output = process.StandardOutput.ReadToEnd();
-        process.WaitForExit();
-        return (process.ExitCode, output + errors.Result);
-    }
-
-    [GeneratedRegex(@"^(?<file>.+?)\((?<line>\d+),(?<column>\d+)\): (?<kind>error|warning) (?<code>\w+): (?<message>.*?)(?: \[[^\]]*\])?$")]
+    // GCC and Clang: "path/file.c:12:5: error: message" (Windows paths have a drive letter).
+    [GeneratedRegex(@"^(?<file>(?:[A-Za-z]:)?[^:]+):(?<line>\d+):(?<column>\d+): (?<kind>fatal error|error|warning): (?<message>.*)$")]
     private static partial Regex DiagnosticLine();
 
-    private static List<ScriptDiagnostic> ParseDiagnostics(string output, string assets)
+    private static List<ScriptDiagnostic> ParseDiagnostics(string output, string projectRoot)
     {
         var result = new List<ScriptDiagnostic>();
         foreach (string raw in output.Split('\n'))
         {
-            Match m = DiagnosticLine().Match(raw.Trim());
+            Match m = DiagnosticLine().Match(raw.TrimEnd('\r'));
             if (!m.Success)
                 continue;
             string file = m.Groups["file"].Value;
-            // Paths relative to the project, like the rest of the editor ("Assets/Scripts/Player.cs").
+            // Relative to the project, like the rest of the editor ("Assets/Scripts/Player.c").
             string full = Path.GetFullPath(file);
-            string root = Path.GetDirectoryName(assets)!;
-            if (full.StartsWith(root, StringComparison.Ordinal))
-                file = Path.GetRelativePath(root, full).Replace('\\', '/');
+            if (full.StartsWith(Path.GetFullPath(projectRoot), StringComparison.Ordinal))
+                file = Path.GetRelativePath(projectRoot, full).Replace('\\', '/');
             var diagnostic = new ScriptDiagnostic(file, int.Parse(m.Groups["line"].Value), int.Parse(m.Groups["column"].Value),
-                m.Groups["code"].Value, m.Groups["message"].Value, m.Groups["kind"].Value == "error");
+                m.Groups["message"].Value, m.Groups["kind"].Value != "warning");
             if (!result.Contains(diagnostic))
                 result.Add(diagnostic);
         }
         return result;
-    }
-
-    private static string Escape(string path) => System.Security.SecurityElement.Escape(path)!;
-
-    /// <summary>The dotnet that runs the editor when there is one (dotnet MenhirEditor.dll), else the one on the PATH.</summary>
-    public static string DotnetPath()
-    {
-        string? process = Environment.ProcessPath;
-        if (process != null && Path.GetFileNameWithoutExtension(process) == "dotnet")
-            return process;
-        string? root = Environment.GetEnvironmentVariable("DOTNET_ROOT");
-        if (root != null && File.Exists(Path.Combine(root, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet")))
-            return Path.Combine(root, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
-        return "dotnet";
     }
 }

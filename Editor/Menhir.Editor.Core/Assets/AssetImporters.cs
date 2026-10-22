@@ -17,7 +17,8 @@ public static class AssetImporters
     private static readonly Dictionary<string, string> ByExtension = new(StringComparer.OrdinalIgnoreCase)
     {
         [".scene"] = Scene,
-        [".cs"] = Script,
+        [".c"] = Script,
+        [".h"] = Script,
         [".png"] = Texture,
         [".jpg"] = Texture,
         [".jpeg"] = Texture,

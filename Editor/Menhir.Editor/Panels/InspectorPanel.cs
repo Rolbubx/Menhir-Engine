@@ -88,7 +88,7 @@ public sealed class InspectorPanel : EditorPanel
             }
             else if (component is ScriptComponent script)
             {
-                Type? scriptType = _scripts.Current?.Find(script.ClassName);
+                ScriptType? scriptType = _scripts.Current?.Find(script.ScriptName);
                 bool notFound = scriptType == null && !_scripts.IsCompiling;
                 if (ComponentHeader.Draw("component", Icons.Script, notFound ? EditorTheme.Warning : EditorTheme.Text,
                         ScriptDrawer.Title(script) + (notFound ? " (Missing)" : " (Script)"), "##componentMenu"))
@@ -188,13 +188,13 @@ public sealed class InspectorPanel : EditorPanel
         }
     }
 
-    /// <summary>The project's script classes (Project > Create > C# Script makes one).</summary>
+    /// <summary>The project's scripts (Project > Create > C Script makes one).</summary>
     private bool DrawAddScriptItems(Entity entity)
     {
         string search = _componentSearch.Trim();
-        List<Type> types = (_scripts.Current?.ScriptTypes ?? [])
+        List<ScriptType> types = (_scripts.Current?.Types ?? [])
             .Where(t => InspectableProperties.NicifyName(t.Name).Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                        t.FullName!.Contains(search, StringComparison.OrdinalIgnoreCase))
+                        t.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
             .ToList();
         if (types.Count == 0 && (search.Length > 0 || !_scripts.IsCompiling))
             return false;
@@ -204,14 +204,13 @@ public sealed class InspectorPanel : EditorPanel
         ImGui.PopStyleColor();
         if (types.Count == 0)
             ImGui.TextDisabled("Compiling the scripts...");
-        foreach (Type type in types)
+        foreach (ScriptType type in types)
         {
-            string className = type.FullName!;
-            bool present = entity.Components.OfType<ScriptComponent>().Any(c => c.ClassName == className);
-            string label = InspectableProperties.NicifyName(type.Name) + (type.Namespace != null ? $"  ({type.Namespace})" : "");
-            if (ImGui.Selectable($"{Icons.Script}  {label}", false, present ? ImGuiSelectableFlags.Disabled : ImGuiSelectableFlags.None))
+            bool present = entity.Components.OfType<ScriptComponent>().Any(c => c.ScriptName == type.Name);
+            if (ImGui.Selectable($"{Icons.Script}  {InspectableProperties.NicifyName(type.Name)}", false,
+                    present ? ImGuiSelectableFlags.Disabled : ImGuiSelectableFlags.None))
             {
-                var component = new ScriptComponent { ClassName = className };
+                var component = new ScriptComponent { ScriptName = type.Name };
                 _pendingChange = () => _context.Execute(new AddComponentCommand(entity, component));
             }
         }

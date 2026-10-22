@@ -6,13 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>Menhir.Editor</RootNamespace>
+    <!-- Play mode runs the C scripts' structs and callbacks (Scripting/ScriptLibrary.cs). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
-
-  <ItemGroup>
-    <!-- The scripting API: the editor hosts scripts in Play mode. -->
-    <ProjectReference Include="..\..\Engine\Scripting\Menhir.Engine\Menhir.Engine.csproj" />
-    <!-- IL2C: File > Build translates the game's scripts to C. -->
-    <ProjectReference Include="..\..\Translator\Menhir.Translator\Menhir.Translator.csproj" />
-  </ItemGroup>
 
 </Project>

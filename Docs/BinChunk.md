@@ -70,7 +70,7 @@ A type and id pair is unique. Unknown chunk types are ignored by readers.
 10. Scene switchers: `u32` count, then `u32` entity, `string` button, `u32` scene index, `u32` mode (0 single, 1 additive).
 11. Entity names: `string` per entity.
 12. Scripts ([Scripting.md](Scripting.md)), in entity order then component order: `u32` count, then `u32` entity,
-    `string` class name (as .NET's `Type.FullName`), `u32` value count, then per saved field value `string` field
+    `string` script name (its struct's), `u32` value count, then per saved field value `string` field
     name, `u32` kind and the value as the scene's JSON had it: 0 number (`string`, the number as written),
     1 boolean (`bool`), 2 string (`string`), 3 list of numbers (`u32` count, then a `string` per number). The game
     converts each value to its field's type (and warns when it does not fit), like Play mode.

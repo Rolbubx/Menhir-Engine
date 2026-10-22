@@ -4,15 +4,4 @@
     <Project Path="Editor/Menhir.Editor.Tests/Menhir.Editor.Tests.csproj" />
     <Project Path="Editor/Menhir.Editor/Menhir.Editor.csproj" />
   </Folder>
-  <Folder Name="/Engine/">
-    <Project Path="Engine/Scripting/Menhir.Engine/Menhir.Engine.csproj" />
-    <Project Path="Engine/Scripting/Menhir.Engine.Native/Menhir.Engine.Native.csproj" />
-  </Folder>
-  <Folder Name="/Translator/">
-    <Project Path="Translator/CoreLib/Menhir.CoreLib.csproj" />
-    <Project Path="Translator/Menhir.Translator.Tests/Menhir.Translator.Tests.csproj" />
-    <Project Path="Translator/Menhir.Translator/Menhir.Translator.csproj" />
-    <Project Path="Translator/TestPrograms/Dotnet/TestPrograms.Dotnet.csproj" />
-    <Project Path="Translator/TestPrograms/Menhir/TestPrograms.Menhir.csproj" />
-  </Folder>
 </Solution>

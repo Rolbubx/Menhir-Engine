@@ -24,24 +24,24 @@ public sealed class ScriptTemplateTests : IDisposable
     [Fact]
     public void Create_PicksAFreeName()
     {
-        Assert.Equal("Assets/NewScript.cs", ScriptTemplate.Create(_project.Assets, AssetPaths.Root));
-        Assert.Equal("Assets/NewScript1.cs", ScriptTemplate.Create(_project.Assets, AssetPaths.Root));
-        Assert.Contains("public class NewScript1 : Script", File.ReadAllText(_project.Assets.ToAbsolutePath("Assets/NewScript1.cs")));
-        Assert.Equal(AssetImporters.Script, _project.Assets.FindByPath("Assets/NewScript1.cs")!.Meta.Importer);
+        Assert.Equal("Assets/NewScript.c", ScriptTemplate.Create(_project.Assets, AssetPaths.Root));
+        Assert.Equal("Assets/NewScript1.c", ScriptTemplate.Create(_project.Assets, AssetPaths.Root));
+        Assert.Contains("MH_SCRIPT(NewScript1,", File.ReadAllText(_project.Assets.ToAbsolutePath("Assets/NewScript1.c")));
+        Assert.Equal(AssetImporters.Script, _project.Assets.FindByPath("Assets/NewScript1.c")!.Meta.Importer);
     }
 
     [Fact]
     public void RenameClass_FollowsTheFileOnlyForAnUntouchedTemplate()
     {
-        string path = _project.Assets.Rename(ScriptTemplate.Create(_project.Assets, AssetPaths.Root), "Player.cs");
+        string path = _project.Assets.Rename(ScriptTemplate.Create(_project.Assets, AssetPaths.Root), "Player.c");
         string file = _project.Assets.ToAbsolutePath(path);
-        Assert.True(ScriptTemplate.RenameClass(file, "NewScript.cs", "Player.cs"));
+        Assert.True(ScriptTemplate.RenameClass(file, "NewScript.c", "Player.c"));
         Assert.Equal(ScriptTemplate.Content("Player"), File.ReadAllText(file));
 
         File.AppendAllText(file, "// edited\n");
-        Assert.False(ScriptTemplate.RenameClass(file, "Player.cs", "Hero.cs"));
-        Assert.False(ScriptTemplate.RenameClass(file, "Player.cs", "My Hero.cs")); // not a class name
-        Assert.Contains("class Player", File.ReadAllText(file));
+        Assert.False(ScriptTemplate.RenameClass(file, "Player.c", "Hero.c"));
+        Assert.False(ScriptTemplate.RenameClass(file, "Player.c", "My Hero.c")); // not a C name
+        Assert.Contains("} Player;", File.ReadAllText(file));
     }
 
     [Fact]

@@ -1,16 +1,14 @@
 # Menhir Engine
 
-A personal game engine. Games are scripted in C#, like Unity: the editor's Play mode runs the
-scripts on .NET, and **File → Build** makes a native game: one `main.c` (OpenGL + GLFW, the same rendering
-as the editor), its `GameData.binchunk`, and the scripts translated to C by the IL→C translator (IL2C)
-with a small C runtime and a garbage collector ([Engine/README](Engine/README.md),
-[Docs/Scripting.md](Docs/Scripting.md)).
+A personal game engine with a Unity-like editor in C#. Games are scripted in C
+([Docs/Scripting.md](Docs/Scripting.md)): the editor's Play mode compiles the scripts into a library it
+loads, and **File → Build** makes a native game: one `main.c` (OpenGL + GLFW, the same rendering as the
+editor) compiled with the scripts, and its `GameData.binchunk` ([Engine/README](Engine/README.md)).
 
 | Folder        | What                                                      |
 |---------------|-----------------------------------------------------------|
 | `Editor/`     | C# editor (Silk.NET + OpenGL 3.3 Core + ImGui docking)    |
-| `Engine/`     | Native C side: game player, IL2C runtime, GLFW, glad, Boehm GC ([README](Engine/README.md)) |
-| `Translator/` | IL2C translator and its custom corlib ([README](Translator/README.md)) |
+| `Engine/`     | Native C side: game player, scripting API, GLFW, glad ([README](Engine/README.md)) |
 | `Samples/`    | Sample projects for testing the editor                    |
 
 ## Running the editor
@@ -112,18 +110,20 @@ A component whose type no longer exists is kept as is and saved back unchanged.
 
 ### Scripts and Play mode
 
-Every `.cs` file in `Assets/` is a script of the project; a class deriving from `MenhirEngine.Script`
-can be added to entities (**Add Component → Scripts**), and its public fields show in the Inspector and
-are saved with the scene. **Project → Create → C# Script** makes one from a template (renaming the new file
-renames its class); double-click opens it with the system's editor. The editor compiles the scripts in the
-background (`dotnet build`, when the project opens and whenever a script changes) and lists the errors in the
-Console. See [Docs/Scripting.md](Docs/Scripting.md) for the API.
+Every `.c` file in `Assets/` is part of the project's scripts; a struct declared with `MH_SCRIPT` can be
+added to entities (**Add Component → Scripts**), and the fields it lists show in the Inspector and are saved
+with the scene. **Project → Create → C Script** makes one from a template (renaming the new file renames its
+struct); double-click opens it with the system's editor. The editor compiles the scripts in the background
+with the C compiler of **Project Settings → Build** (when the project opens and whenever a `.c` or `.h` file
+changes) and lists the errors in the Console. See [Docs/Scripting.md](Docs/Scripting.md) for the API.
 
 The **Play** button (top middle, Ctrl+P) runs the game in the editor on copies of the scenes, starting with the
 open one: the **Game** panel shows the game's camera and gets the keyboard, mouse and gamepad while it has the
 focus (**Esc** frees a captured cursor); the Viewport shows the running game too. **Pause** and **Step** (one
 frame) are next to it. Stopping goes back to the scenes as they were: the game never changes them, and edits
 made while playing stay. Play mode waits for the scripts to compile, and does not start while they have errors.
+The scripts run inside the editor: a script that crashes (a bad pointer) closes the editor, so save first.
+On Windows, Smart App Control may refuse to load the compiled scripts (it blocks libraries it does not know).
 
 ### Rendering
 

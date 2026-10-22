@@ -11,8 +11,8 @@
      --dump               print the first frame's matrices, lights and shadows, without a window
      --simulate <file>    play a script of input events without a window (see mh_dump.c)
    --dump and --simulate are the only options of a MENHIR_HEADLESS build, used by the editor's tests.
-   A game with scripts is built with MENHIR_SCRIPTS, and linked with their C (from IL2C), the
-   runtime (Engine/Runtime) and the collector (Engine/ThirdParty/bdwgc). */
+   A game with scripts is built with MENHIR_SCRIPTS and linked with them and Engine/Scripting's
+   menhir_script.c (see mh_scripts.c). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -179,7 +179,7 @@ int main(int argc, char **argv)
 {
     mh_options options = mh_parse(argc, argv);
 #ifdef MENHIR_SCRIPTS
-    m_init(); /* the collector, before any script is created */
+    mh_scripts_init(); /* the scripts get the engine before the first scene loads */
 #endif
     if (options.dump)
         mh_log_mode = MH_LOG_STDERR;

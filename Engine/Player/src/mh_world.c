@@ -8,7 +8,7 @@
 #include <string.h>
 #include "mh_data.h"
 #ifdef MENHIR_SCRIPTS
-#include <menhir/runtime.h>
+#include <menhir_abi.h>
 #endif
 
 #define MH_MAX_LOADED_SCENES 8
@@ -20,8 +20,11 @@ typedef struct {
     mat4 *world; /* per entity, updated by mh_world_update_matrices */
     float *fly_yaw, *fly_pitch;
 #ifdef MENHIR_SCRIPTS
-    MObject **scripts;      /* per mh_scene.scripts entry (NULL: not created); memory the collector scans */
-    unsigned char *started; /* Start has run */
+    const mh_script_type **types; /* per mh_scene.scripts entry (NULL: no such script) */
+    void **scripts;               /* each one's struct */
+    unsigned char *started;       /* Start has run */
+    char **strings;               /* the string fields' texts, freed with the scene */
+    int string_count;
 #endif
 } mh_loaded_scene;
 
@@ -46,7 +49,7 @@ enum { MH_LOG_INFO, MH_LOG_WARNING, MH_LOG_ERROR };
 enum { MH_LOG_NORMAL, MH_LOG_PREFIXED, MH_LOG_STDERR };
 static int mh_log_mode;
 
-/* Debug.Log and the scripts' errors. */
+/* mh_log in scripts, and the warnings about them. */
 static void mh_log(int level, const char *format, ...)
 {
     va_list args;
@@ -73,8 +76,8 @@ static void mh_scripts_load(mh_world *w, mh_loaded_scene *s)
 {
     (void)w;
     for (int i = 0; i < s->scene.script_count; i++)
-        mh_log(MH_LOG_WARNING, "%s: the script %s does not exist (or does not compile).",
-               s->scene.entity_names[s->scene.scripts[i].entity], s->scene.scripts[i].class_name);
+        mh_log(MH_LOG_WARNING, "%s: the script %s does not exist.",
+               s->scene.entity_names[s->scene.scripts[i].entity], s->scene.scripts[i].script_name);
 }
 static void mh_scripts_unload(mh_loaded_scene *s) { (void)s; }
 static void mh_scripts_run(mh_world *w, const mh_input *input, int callback) { (void)w; (void)input; (void)callback; }
@@ -147,7 +150,7 @@ static void mh_world_init(mh_world *w, mh_data *data, const mh_game *game, int f
 static void mh_fly_camera_update(mh_loaded_scene *s, int i, const mh_input *input, float dt, int *looking)
 {
     const mh_fly_camera *f = &s->scene.fly_cameras[i];
-    mh_entity *e = &s->scene.entities[f->entity];
+    mh_entity_data *e = &s->scene.entities[f->entity];
     int look = !f->require_right_mouse_button || mh_get_key(input, MH_RIGHT_MOUSE_BUTTON);
     if (look) {
         s->fly_yaw[i] -= mh_get_axis(input, f->look_x_axis) * f->look_speed;

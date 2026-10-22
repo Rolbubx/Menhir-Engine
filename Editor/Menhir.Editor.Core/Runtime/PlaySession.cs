@@ -1,13 +1,11 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using Menhir.Editor.Build;
 using Menhir.Editor.Input;
+using Menhir.Editor.Logging;
 using Menhir.Editor.Scenes;
 using Menhir.Editor.Scripting;
 using Menhir.Editor.Serialization;
-using Menhir.Editor.Logging;
-using MenhirEngine;
-using Entity = Menhir.Editor.Scenes.Entity;
-using LoadSceneMode = MenhirEngine.LoadSceneMode;
 
 namespace Menhir.Editor.Runtime;
 
@@ -29,40 +27,53 @@ public sealed class LoadedScene
     public string Name { get; }
     public Scene Scene { get; }
 
-    /// <summary>The scripts of each entity (by entity index), in component order.</summary>
-    internal List<MenhirEngine.Script>?[] Scripts { get; set; } = [];
+    internal List<RunningScript> Scripts { get; } = new();
+    internal nint[] Names { get; set; } = []; // entity names as UTF-8, for mh_get_name
     internal List<FlyCameraBehaviour> FlyCameras { get; } = new();
     internal List<(SceneSwitcher Switcher, int Target)> Switchers { get; } = new();
 }
 
-/// <summary>
-/// The game running in the editor (Play mode): copies of the build's scenes, the Input Manager,
-/// the built-in behaviours and the project's scripts, hosting the scripting API. Each
-/// <see cref="Update"/> is one frame, in the same order as the built game's player (mh_world.c):
-/// input, Start (scripts not started yet), Update, built-in behaviours, LateUpdate, then the scene
-/// change asked for during the frame. Exceptions thrown by scripts are logged, and the frame goes on.
-/// </summary>
-public sealed class PlaySession : IEngineHost, IDisposable
+/// <summary>A script of a loaded scene: its type and its struct (native memory).</summary>
+internal sealed unsafe class RunningScript(int entity, ScriptType type, void* memory)
 {
+    public int Entity { get; } = entity;
+    public ScriptType Type { get; } = type;
+    public void* Memory { get; } = memory;
+    public bool Started { get; set; }
+}
+
+/// <summary>
+/// The game running in the editor (Play mode): copies of the build's scenes, the Input Manager, the
+/// built-in behaviours and the project's C scripts (a <see cref="ScriptLibrary"/>), which reach the
+/// engine through <see cref="ScriptHost"/>. Each <see cref="Update"/> is one frame, in the same order as
+/// the built game's player (mh_world.c): input, Start (scripts not started yet), Update, built-in
+/// behaviours, LateUpdate, then the scene change asked for during the frame. A script that crashes
+/// takes the editor down with it: they run in its process.
+/// </summary>
+public sealed unsafe class PlaySession : IDisposable
+{
+    private delegate* unmanaged<void*, int, void> Callback(nint pointer) => (delegate* unmanaged<void*, int, void>)pointer;
+
     private readonly IReadOnlyList<BuildScene> _buildScenes;
-    private readonly ScriptAssembly? _scripts;
+    private readonly ScriptLibrary? _scripts;
     private readonly Action<LogLevel, string> _log;
     private readonly List<LoadedScene> _loaded = new();
-    private readonly List<MenhirEngine.Script> _notStarted = new();
+    private readonly List<nint> _strings = new(); // native strings given to scripts, freed at the end
     private int _nextSerial = 1;
     private (int Index, LoadSceneMode Mode)? _request;
 
     /// <param name="buildScenes">The scenes the game can load, by build index.</param>
-    /// <param name="scripts">The compiled scripts (null: the project has none).</param>
-    /// <param name="log">Debug.Log and script errors.</param>
-    public PlaySession(IReadOnlyList<BuildScene> buildScenes, int firstScene, InputSettings input, ScriptAssembly? scripts,
+    /// <param name="scripts">The compiled scripts (null: the project has none). The session uses it until disposed.</param>
+    /// <param name="log">mh_log and the warnings about scripts.</param>
+    public PlaySession(IReadOnlyList<BuildScene> buildScenes, int firstScene, InputSettings input, ScriptLibrary? scripts,
         Action<LogLevel, string> log)
     {
         _buildScenes = buildScenes;
         _scripts = scripts;
         _log = log;
         Input = new InputState(input.Axes);
-        EngineHosting.Current = this;
+        ScriptHost.Current = this;
+        _scripts?.Bind(ScriptHost.Api);
         Load(firstScene, LoadSceneMode.Single);
     }
 
@@ -76,29 +87,19 @@ public sealed class PlaySession : IEngineHost, IDisposable
     /// <summary>A fly camera is looking around (the editor captures the cursor).</summary>
     public bool CursorCaptured { get; private set; }
 
-    /// <summary>Application.Quit was called.</summary>
+    /// <summary>mh_quit was called.</summary>
     public bool QuitRequested { get; private set; }
 
     public void Update(InputFrame frame, float deltaTime)
     {
-        EngineHosting.Current = this;
+        ScriptHost.Current = this;
         Input.Update(frame, deltaTime);
         DeltaTime = deltaTime;
         Time += deltaTime;
         FrameCount++;
 
-        foreach (MenhirEngine.Script script in _notStarted.ToList())
-        {
-            if (!script.enabled)
-                continue;
-            _notStarted.Remove(script);
-            Run(script, "Start", s => s.Start());
-        }
-        foreach (MenhirEngine.Script script in AllScripts())
-        {
-            if (script.enabled && !_notStarted.Contains(script))
-                Run(script, "Update", s => s.Update());
-        }
+        RunScripts(start: true, s => s.Type.Start);
+        RunScripts(start: false, s => s.Type.Update);
 
         bool looking = false;
         foreach (LoadedScene scene in _loaded.ToList())
@@ -111,16 +112,12 @@ public sealed class PlaySession : IEngineHost, IDisposable
             foreach ((SceneSwitcher switcher, int target) in scene.Switchers)
             {
                 if (Input.GetButtonDown(switcher.Button))
-                    _request = (target, switcher.Mode == Menhir.Editor.Scenes.LoadSceneMode.Additive ? LoadSceneMode.Additive : LoadSceneMode.Single);
+                    _request = (target, switcher.Mode);
             }
         }
         CursorCaptured = looking;
 
-        foreach (MenhirEngine.Script script in AllScripts())
-        {
-            if (script.enabled && !_notStarted.Contains(script))
-                Run(script, "LateUpdate", s => s.LateUpdate());
-        }
+        RunScripts(start: false, s => s.Type.LateUpdate);
 
         if (_request is { } request)
         {
@@ -129,24 +126,19 @@ public sealed class PlaySession : IEngineHost, IDisposable
         }
     }
 
-    private IEnumerable<MenhirEngine.Script> AllScripts()
+    /// <summary>Start runs once, before a script's first Update.</summary>
+    private void RunScripts(bool start, Func<RunningScript, nint> callback)
     {
-        foreach (LoadedScene scene in _loaded.ToList())
-            foreach (List<MenhirEngine.Script>? scripts in scene.Scripts)
-                if (scripts != null)
-                    foreach (MenhirEngine.Script script in scripts.ToList())
-                        yield return script;
-    }
-
-    private void Run(MenhirEngine.Script script, string method, Action<MenhirEngine.Script> call)
-    {
-        try
+        foreach (LoadedScene scene in _loaded)
         {
-            call(script);
-        }
-        catch (Exception e)
-        {
-            _log(LogLevel.Error, $"{script.GetType().Name}.{method} on '{script.name}': {e.GetType().Name}: {e.Message}");
+            foreach (RunningScript script in scene.Scripts)
+            {
+                if (start == script.Started)
+                    continue;
+                script.Started = true;
+                if (callback(script) is not 0 and var function)
+                    Callback(function)(script.Memory, Handle(scene, script.Entity));
+            }
         }
     }
 
@@ -158,8 +150,9 @@ public sealed class PlaySession : IEngineHost, IDisposable
             return;
         if (mode == LoadSceneMode.Single)
         {
+            foreach (LoadedScene scene in _loaded)
+                Unload(scene);
             _loaded.Clear();
-            _notStarted.Clear();
         }
         else if (_loaded.Any(s => s.Index == index))
             return;
@@ -171,8 +164,7 @@ public sealed class PlaySession : IEngineHost, IDisposable
         _loaded.Add(loaded);
 
         IReadOnlyList<Entity> entities = copy.Entities;
-        loaded.Scripts = new List<MenhirEngine.Script>?[entities.Count];
-        var created = new List<MenhirEngine.Script>();
+        loaded.Names = entities.Select(e => Marshal.StringToCoTaskMemUTF8(e.Name)).ToArray();
         for (int i = 0; i < entities.Count; i++)
         {
             Entity entity = entities[i];
@@ -180,10 +172,8 @@ public sealed class PlaySession : IEngineHost, IDisposable
             {
                 switch (component)
                 {
-                    case ScriptComponent sc when CreateScript(sc, entity) is { } script:
-                        EngineHosting.Attach(script, Handle(loaded, i));
-                        (loaded.Scripts[i] ??= new List<MenhirEngine.Script>()).Add(script);
-                        created.Add(script);
+                    case ScriptComponent sc when CreateScript(sc, entity, i) is { } script:
+                        loaded.Scripts.Add(script);
                         break;
                     case FlyCamera fly when entity.Components.OfType<FlyCamera>().First() == fly:
                         loaded.FlyCameras.Add(new FlyCameraBehaviour(fly, entity.Transform));
@@ -198,33 +188,52 @@ public sealed class PlaySession : IEngineHost, IDisposable
                 }
             }
         }
-        foreach (MenhirEngine.Script script in created)
-            Run(script, "Awake", s => s.Awake());
-        _notStarted.AddRange(created);
+        foreach (RunningScript script in loaded.Scripts.ToList())
+        {
+            if (script.Type.Awake != 0)
+                Callback(script.Type.Awake)(script.Memory, Handle(loaded, script.Entity));
+        }
     }
 
-    private MenhirEngine.Script? CreateScript(ScriptComponent component, Entity entity)
+    private RunningScript? CreateScript(ScriptComponent component, Entity entity, int index)
     {
-        Type? type = _scripts?.Find(component.ClassName);
-        if (type == null)
+        if (_scripts?.Find(component.ScriptName) is not { } type)
         {
-            _log(LogLevel.Warning, $"{entity.Name}: the script {component.ClassName} does not exist (or does not compile).");
+            _log(LogLevel.Warning, $"{entity.Name}: the script {component.ScriptName} does not exist.");
             return null;
         }
-        MenhirEngine.Script script;
-        try
+        void* memory = NativeMemory.AlignedAlloc((nuint)Math.Max(type.Size, 1), 16);
+        NativeMemory.Clear(memory, (nuint)Math.Max(type.Size, 1));
+        foreach (ScriptField field in type.Fields)
         {
-            script = (MenhirEngine.Script)Activator.CreateInstance(type)!;
+            object value = ScriptFields.DefaultValue(field);
+            if (component.Fields.TryGetValue(field.Name, out var json))
+            {
+                if (ScriptFields.FromJson(field, json) is { } saved)
+                    value = saved;
+                else
+                    _log(LogLevel.Warning, $"{entity.Name}: the saved value of {component.ScriptName}.{field.Name} does not fit the field; it keeps its default.");
+            }
+            ScriptFields.Write(memory, field, value, NativeString);
         }
-        catch (System.Reflection.TargetInvocationException e) when (e.InnerException is { } inner)
-        {
-            // Like the game's mh_scripts.c: the script is left out.
-            _log(LogLevel.Error, $"{type.Name}..ctor on '{entity.Name}': {inner.GetType().Name}: {inner.Message}");
-            return null;
-        }
-        foreach (string field in ScriptFields.Apply(script, component.Fields))
-            _log(LogLevel.Warning, $"{entity.Name}: the saved value of {component.ClassName}.{field} does not fit the field; it keeps its default.");
-        return script;
+        return new RunningScript(index, type, memory);
+    }
+
+    private nint NativeString(string text)
+    {
+        nint pointer = Marshal.StringToCoTaskMemUTF8(text);
+        _strings.Add(pointer);
+        return pointer;
+    }
+
+    private static void Unload(LoadedScene scene)
+    {
+        foreach (RunningScript script in scene.Scripts)
+            NativeMemory.AlignedFree(script.Memory);
+        scene.Scripts.Clear();
+        foreach (nint name in scene.Names)
+            Marshal.FreeCoTaskMem(name);
+        scene.Names = [];
     }
 
     private int FindScene(string name) =>
@@ -234,7 +243,7 @@ public sealed class PlaySession : IEngineHost, IDisposable
 
     private static int Handle(LoadedScene scene, int index) => (scene.Serial & 0x7FFF) << 16 | index;
 
-    private (LoadedScene Scene, Entity Entity, int Index)? Resolve(int handle)
+    private (LoadedScene Scene, int Index)? Resolve(int handle)
     {
         if (handle < 0)
             return null;
@@ -242,59 +251,67 @@ public sealed class PlaySession : IEngineHost, IDisposable
         LoadedScene? scene = _loaded.FirstOrDefault(s => (s.Serial & 0x7FFF) == serial);
         if (scene == null || index >= scene.Scene.Entities.Count)
             return null;
-        return (scene, scene.Scene.Entities[index], index);
+        return (scene, index);
     }
 
-    private Entity EntityOf(int handle) =>
-        Resolve(handle)?.Entity ?? throw new InvalidOperationException("This entity is not in a loaded scene any more.");
-
-    // ---- IEngineHost --------------------------------------------------------------------------
-
-    float IEngineHost.GetFloat(int entity, int property)
+    private Scenes.Transform? TransformOf(int handle)
     {
-        Menhir.Editor.Scenes.Transform t = EntityOf(entity).Transform;
-        return property switch
+        if (Resolve(handle) is var (scene, index))
+            return scene.Scene.Entities[index].Transform;
+        _log(LogLevel.Error, $"Entity {handle} is not in a loaded scene.");
+        return null;
+    }
+
+    // ---- What ScriptHost forwards (the mh_api table) --------------------------------------------
+
+    internal void GetTransform(int entity, int what, Span<float> output)
+    {
+        Scenes.Transform? t = TransformOf(entity);
+        Vector4 v = what switch
         {
-            0 => t.Position.X, 1 => t.Position.Y, 2 => t.Position.Z,
-            3 => t.Rotation.X, 4 => t.Rotation.Y, 5 => t.Rotation.Z, 6 => t.Rotation.W,
-            7 => t.Scale.X, 8 => t.Scale.Y, _ => t.Scale.Z,
+            0 => new Vector4(t?.Position ?? Vector3.Zero, 0),
+            1 => t is { } r ? new Vector4(r.Rotation.X, r.Rotation.Y, r.Rotation.Z, r.Rotation.W) : new Vector4(0, 0, 0, 1),
+            _ => new Vector4(t?.Scale ?? Vector3.One, 0),
         };
+        output[0] = v.X;
+        output[1] = v.Y;
+        output[2] = v.Z;
+        if (what == 1)
+            output[3] = v.W;
     }
 
-    void IEngineHost.SetFloat(int entity, int property, float value)
+    internal void SetTransform(int entity, int what, ReadOnlySpan<float> values)
     {
-        Menhir.Editor.Scenes.Transform t = EntityOf(entity).Transform;
-        if (property < 3)
-        {
-            System.Numerics.Vector3 p = t.Position;
-            if (property == 0) p.X = value; else if (property == 1) p.Y = value; else p.Z = value;
-            t.Position = p;
-        }
-        else if (property < 7)
-        {
-            System.Numerics.Quaternion q = t.Rotation;
-            if (property == 3) q.X = value; else if (property == 4) q.Y = value; else if (property == 5) q.Z = value; else q.W = value;
-            t.Rotation = q;
-        }
+        if (TransformOf(entity) is not { } t)
+            return;
+        if (what == 0)
+            t.Position = new Vector3(values[0], values[1], values[2]);
+        else if (what == 1)
+            t.Rotation = new Quaternion(values[0], values[1], values[2], values[3]);
         else
-        {
-            System.Numerics.Vector3 s = t.Scale;
-            if (property == 7) s.X = value; else if (property == 8) s.Y = value; else s.Z = value;
-            t.Scale = s;
-        }
+            t.Scale = new Vector3(values[0], values[1], values[2]);
     }
 
-    int IEngineHost.GetParent(int entity)
+    internal int GetParent(int entity)
     {
-        if (Resolve(entity) is not var (scene, e, _) || e.ParentId == 0)
+        if (Resolve(entity) is not var (scene, index))
             return -1;
-        int index = scene.Scene.Entities.ToList().FindIndex(x => x.LocalId == e.ParentId);
-        return index < 0 ? -1 : Handle(scene, index);
+        long parent = scene.Scene.Entities[index].ParentId;
+        int found = parent == 0 ? -1 : scene.Scene.Entities.ToList().FindIndex(e => e.LocalId == parent);
+        return found < 0 ? -1 : Handle(scene, found);
     }
 
-    string IEngineHost.GetName(int entity) => EntityOf(entity).Name;
+    internal nint GetName(int entity)
+    {
+        if (Resolve(entity) is var (scene, index))
+            return scene.Names[index];
+        _log(LogLevel.Error, $"Entity {entity} is not in a loaded scene.");
+        return EmptyString;
+    }
 
-    int IEngineHost.FindEntity(string name)
+    private static readonly nint EmptyString = Marshal.StringToCoTaskMemUTF8("");
+
+    internal int Find(string name)
     {
         foreach (LoadedScene scene in _loaded)
         {
@@ -305,25 +322,28 @@ public sealed class PlaySession : IEngineHost, IDisposable
         return -1;
     }
 
-    int IEngineHost.GetScriptCount(int entity) =>
-        Resolve(entity) is var (scene, _, index) ? scene.Scripts[index]?.Count ?? 0 : 0;
+    internal nint GetScript(int entity, string type)
+    {
+        if (Resolve(entity) is not var (scene, index))
+            return 0;
+        RunningScript? script = scene.Scripts.FirstOrDefault(s => s.Entity == index && s.Type.Name == type);
+        return script == null ? 0 : (nint)script.Memory;
+    }
 
-    object IEngineHost.GetScript(int entity, int index) =>
-        Resolve(entity) is var (scene, _, i) ? scene.Scripts[i]![index] : null!;
-
-    float IEngineHost.GetAxis(string name, bool raw) => raw ? Input.GetAxisRaw(name) : Input.GetAxis(name);
-
-    bool IEngineHost.GetButton(string name, int which) => which switch
+    internal bool GetButton(string name, int which) => which switch
     {
         0 => Input.GetButton(name),
         1 => Input.GetButtonDown(name),
         _ => Input.GetButtonUp(name),
     };
 
-    bool IEngineHost.GetKey(string name, int which)
+    internal bool GetKey(string name, int which)
     {
         if (!InputCodes.TryParse(name, out int code) || code == InputCodes.None)
-            throw new ArgumentException($"Input Key named: {name} is unknown");
+        {
+            _log(LogLevel.Error, $"There is no key named '{name}'.");
+            return false;
+        }
         return which switch
         {
             0 => Input.GetKey(code),
@@ -332,33 +352,29 @@ public sealed class PlaySession : IEngineHost, IDisposable
         };
     }
 
-    float IEngineHost.GetMouse(int axis) => axis == 0 ? Input.MouseX : Input.MouseY;
-
-    float IEngineHost.GetTime(int which) => which switch
-    {
-        0 => DeltaTime,
-        1 => Time,
-        _ => FrameCount,
-    };
-
-    void IEngineHost.Log(int level, string message) =>
+    internal void Log(int level, string message) =>
         _log(level == 0 ? LogLevel.Info : level == 1 ? LogLevel.Warning : LogLevel.Error, message);
 
-    bool IEngineHost.LoadScene(string name, int index, int mode)
+    internal bool RequestScene(string? name, int index, int mode)
     {
         int target = name != null ? FindScene(name) : index;
         if (target < 0 || target >= _buildScenes.Count)
             return false;
-        _request = (target, (LoadSceneMode)mode);
+        _request = (target, mode == 1 ? LoadSceneMode.Additive : LoadSceneMode.Single);
         return true;
     }
 
-    void IEngineHost.Quit() => QuitRequested = true;
+    internal void Quit() => QuitRequested = true;
 
     public void Dispose()
     {
-        if (EngineHosting.Current == this)
-            EngineHosting.Current = null;
+        if (ScriptHost.Current == this)
+            ScriptHost.Current = null;
+        foreach (LoadedScene scene in _loaded)
+            Unload(scene);
         _loaded.Clear();
+        foreach (nint pointer in _strings)
+            Marshal.FreeCoTaskMem(pointer);
+        _strings.Clear();
     }
 }

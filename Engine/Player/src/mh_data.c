@@ -277,9 +277,9 @@ static void mh_load_scene(mh_data *data, int index, mh_scene *scene)
     scene->ambient_bottom = mh_vec3(&r);
 
     scene->entity_count = mh_count(&r, 44);
-    scene->entities = mh_alloc(sizeof(mh_entity) * (size_t)scene->entity_count);
+    scene->entities = mh_alloc(sizeof(mh_entity_data) * (size_t)scene->entity_count);
     for (int i = 0; i < scene->entity_count; i++) {
-        mh_entity *e = &scene->entities[i];
+        mh_entity_data *e = &scene->entities[i];
         e->parent = mh_i32(&r);
         if (e->parent < -1 || e->parent >= scene->entity_count)
             e->parent = -1;
@@ -374,7 +374,7 @@ static void mh_load_scene(mh_data *data, int index, mh_scene *scene)
     for (int i = 0; i < scene->script_count; i++) {
         mh_script_data *d = &scene->scripts[i];
         MH_ENTITY_INDEX(d->entity);
-        d->class_name = mh_string(&r);
+        d->script_name = mh_string(&r);
         d->value_count = mh_count(&r, 8);
         d->values = mh_alloc(sizeof(mh_script_value) * (size_t)d->value_count);
         for (int v = 0; v < d->value_count; v++) {
@@ -423,7 +423,7 @@ static void mh_free_scene(mh_scene *scene)
     free(scene->entity_names);
     for (int i = 0; i < scene->script_count; i++) {
         mh_script_data *d = &scene->scripts[i];
-        free(d->class_name);
+        free(d->script_name);
         for (int v = 0; v < d->value_count; v++) {
             mh_script_value *value = &d->values[v];
             free(value->name);

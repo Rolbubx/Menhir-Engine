@@ -410,7 +410,7 @@ public sealed class ProjectPanel : EditorPanel
                 }
             };
         }
-        if (ImGui.MenuItem($"{Icons.Script}  C# Script"))
+        if (ImGui.MenuItem($"{Icons.Script}  C Script"))
         {
             string parent = _currentFolder;
             _pendingChange = () =>

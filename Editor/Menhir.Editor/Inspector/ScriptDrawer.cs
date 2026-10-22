@@ -1,8 +1,10 @@
+using System.Numerics;
 using System.Reflection;
 using System.Text.Json;
 using ImGuiNET;
 using Menhir.Editor.Commands;
 using Menhir.Editor.Inspection;
+using Menhir.Editor.Mathematics;
 using Menhir.Editor.Scenes;
 using Menhir.Editor.Scripting;
 using Menhir.Editor.UI;
@@ -10,73 +12,48 @@ using Menhir.Editor.UI;
 namespace Menhir.Editor.Inspector;
 
 /// <summary>
-/// Draws a <see cref="ScriptComponent"/>: the public fields of its class, with the scene's saved values
-/// (or the class's defaults). An edit replaces the component's field values in one undoable command.
+/// Draws a <see cref="ScriptComponent"/>: the fields its script declares (MH_FIELDS), with the scene's
+/// saved values or the declared defaults. An edit replaces the component's field values in one
+/// undoable command.
 /// </summary>
 public static class ScriptDrawer
 {
     private static readonly PropertyInfo FieldsProperty = typeof(ScriptComponent).GetProperty(nameof(ScriptComponent.Fields))!;
 
-    // One instance of each class, for the values its fields start with. Emptied when the scripts are reloaded.
-    private static readonly Dictionary<Type, object?> Defaults = new();
+    /// <summary>"Player Controller" for PlayerController.</summary>
+    public static string Title(ScriptComponent component) =>
+        InspectableProperties.NicifyName(component.ScriptName.Length > 0 ? component.ScriptName : "Script");
 
-    public static void ClearCache() => Defaults.Clear();
-
-    /// <summary>"Player Controller" for Game.PlayerController.</summary>
-    public static string Title(ScriptComponent component)
-    {
-        string name = component.ClassName;
-        int dot = name.LastIndexOf('.');
-        return InspectableProperties.NicifyName(dot >= 0 ? name[(dot + 1)..] : name.Length > 0 ? name : "Script");
-    }
-
-    /// <param name="type">The component's class, or null when it is not found in the compiled scripts.</param>
-    /// <param name="compiling">The scripts are being compiled (a missing class may be on its way).</param>
-    public static void Draw(ScriptComponent component, Type? type, bool compiling, Action<ICommand> execute)
+    /// <param name="type">The component's script, or null when the compiled scripts do not have it.</param>
+    /// <param name="compiling">The scripts are being compiled (a missing script may be on its way).</param>
+    public static void Draw(ScriptComponent component, ScriptType? type, bool compiling, Action<ICommand> execute)
     {
         if (type == null)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, compiling ? EditorTheme.TextDim : EditorTheme.Warning);
             ImGui.TextWrapped(compiling
-                ? $"Compiling the scripts..."
-                : $"The script class '{component.ClassName}' was not found: check the Console for compile errors, " +
-                  "or that the class derives from Script. Its saved values are kept.");
+                ? "Compiling the scripts..."
+                : $"The script '{component.ScriptName}' was not found: check the Console for compile errors, " +
+                  "or that a .c file declares it with MH_SCRIPT. Its saved values are kept.");
             ImGui.PopStyleColor();
             return;
-        }
-
-        if (!Defaults.TryGetValue(type, out object? defaults))
-        {
-            try
-            {
-                defaults = Activator.CreateInstance(type);
-            }
-            catch (TargetInvocationException e)
-            {
-                Logging.Log.Error($"Creating {type.FullName} failed: {e.InnerException?.Message}");
-                defaults = null;
-            }
-            Defaults[type] = defaults;
         }
 
         if (!PropertyTable.Begin("##fields"))
             return;
         PropertyTable.Row("Script");
-        ImGui.TextDisabled(component.ClassName);
+        ImGui.TextDisabled(component.ScriptName);
 
-        foreach (ScriptField field in ScriptFields.Of(type))
+        foreach (ScriptField field in type.Fields)
         {
-            object? value = defaults != null ? field.Field.GetValue(defaults) : null;
-            if (component.Fields.TryGetValue(field.Name, out JsonElement saved) && ScriptFields.FromJson(field, saved) is { } loaded)
-                value = loaded;
-
+            object value = ScriptFields.Value(field, component.Fields);
             PropertyTable.Row(InspectableProperties.NicifyName(field.Name), field.Tooltip);
             ImGui.PushID(field.Name);
-            if (DrawValue(field, value, out object? edited))
+            if (DrawValue(field, value, out object edited))
             {
                 var fields = new Dictionary<string, JsonElement>(component.Fields)
                 {
-                    [field.Name] = ScriptFields.ToJson(field.Kind, edited),
+                    [field.Name] = ScriptFields.ToJson(field, edited),
                 };
                 execute(new SetPropertyCommand(component, FieldsProperty, fields));
             }
@@ -85,7 +62,7 @@ public static class ScriptDrawer
         PropertyTable.End();
     }
 
-    private static unsafe bool DrawValue(ScriptField field, object? value, out object? edited)
+    private static bool DrawValue(ScriptField field, object value, out object edited)
     {
         edited = value;
         bool range = field.Min != null && field.Max != null;
@@ -109,30 +86,14 @@ public static class ScriptDrawer
                 edited = i;
                 return changed;
             }
-            case ScriptFieldKind.Long:
-            {
-                long l = value is long v ? v : 0;
-                if (!ImGui.DragScalar("##value", ImGuiDataType.S64, (IntPtr)(&l), 0.1f))
-                    return false;
-                edited = l;
-                return true;
-            }
             case ScriptFieldKind.Float:
             {
                 float f = value is float v ? v : 0;
                 bool changed = range
                     ? ImGui.SliderFloat("##value", ref f, min, max, "%.3f", ImGuiSliderFlags.AlwaysClamp)
-                    : ImGui.DragFloat("##value", ref f, DragSpeed(f), float.MinValue, float.MaxValue, "%.3f");
+                    : ImGui.DragFloat("##value", ref f, MathF.Max(MathF.Abs(f) * 0.01f, 0.01f), float.MinValue, float.MaxValue, "%.3f");
                 edited = f;
                 return changed;
-            }
-            case ScriptFieldKind.Double:
-            {
-                double d = value is double v ? v : 0;
-                if (!ImGui.DragScalar("##value", ImGuiDataType.Double, (IntPtr)(&d), DragSpeed((float)d), IntPtr.Zero, IntPtr.Zero, "%.6g"))
-                    return false;
-                edited = d;
-                return true;
             }
             case ScriptFieldKind.String:
             {
@@ -143,21 +104,31 @@ public static class ScriptDrawer
                 return true;
             }
             case ScriptFieldKind.Enum:
-                return DrawEnum(field.Field.FieldType, value, out edited);
+                return DrawEnum(field, value is int index ? index : 0, out edited);
             case ScriptFieldKind.Vector2:
             {
-                var v = value is MenhirEngine.Vector2 m ? new System.Numerics.Vector2(m.x, m.y) : default;
+                var v = value is Vector2 x ? x : default;
                 if (!PropertyTable.Vector("##value", ref v, 0.01f))
                     return false;
-                edited = new MenhirEngine.Vector2(v.X, v.Y);
+                edited = v;
                 return true;
             }
             case ScriptFieldKind.Vector3:
             {
-                var v = value is MenhirEngine.Vector3 m ? new System.Numerics.Vector3(m.x, m.y, m.z) : default;
+                var v = value is Vector3 x ? x : default;
                 if (!PropertyTable.Vector("##value", ref v, 0.01f))
                     return false;
-                edited = new MenhirEngine.Vector3(v.X, v.Y, v.Z);
+                edited = v;
+                return true;
+            }
+            case ScriptFieldKind.Color:
+            {
+                // Linear in the script, shown in gamma like the other colors.
+                Vector4 shown = ColorSpace.LinearToGamma(value is Vector4 x ? x : Vector4.One);
+                ImGui.SetNextItemWidth(-float.Epsilon);
+                if (!ImGui.ColorEdit4("##value", ref shown, ImGuiColorEditFlags.Float | ImGuiColorEditFlags.AlphaBar))
+                    return false;
+                edited = ColorSpace.GammaToLinear(shown);
                 return true;
             }
             default:
@@ -165,19 +136,19 @@ public static class ScriptDrawer
         }
     }
 
-    private static bool DrawEnum(Type type, object? value, out object? edited)
+    private static bool DrawEnum(ScriptField field, int index, out object edited)
     {
-        edited = value;
+        edited = index;
         bool changed = false;
-        string current = value != null ? InspectableProperties.NicifyName(value.ToString()!) : "";
+        string current = index >= 0 && index < field.Options.Count ? InspectableProperties.NicifyName(field.Options[index]) : index.ToString();
         if (!ImGui.BeginCombo("##value", current))
             return false;
-        foreach (object option in Enum.GetValues(type))
+        for (int i = 0; i < field.Options.Count; i++)
         {
-            bool selected = option.Equals(value);
-            if (ImGui.Selectable(InspectableProperties.NicifyName(option.ToString()!), selected) && !selected)
+            bool selected = i == index;
+            if (ImGui.Selectable(InspectableProperties.NicifyName(field.Options[i]), selected) && !selected)
             {
-                edited = option;
+                edited = i;
                 changed = true;
             }
             if (selected)
@@ -186,7 +157,4 @@ public static class ScriptDrawer
         ImGui.EndCombo();
         return changed;
     }
-
-    // Finer steps for small values, like the other drag fields.
-    private static float DragSpeed(float value) => MathF.Max(MathF.Abs(value) * 0.01f, 0.01f);
 }

@@ -3,6 +3,7 @@ using Menhir.Editor.Assets.Importers;
 using Menhir.Editor.Projects;
 using Menhir.Editor.Rendering;
 using Menhir.Editor.Scenes;
+using Menhir.Editor.Scripting;
 using Menhir.Editor.Serialization;
 
 namespace Menhir.Editor.Build;
@@ -12,9 +13,8 @@ public sealed record GameBuildResult(string Directory, string Executable, IReadO
 
 /// <summary>
 /// File > Build: writes Build/&lt;Name&gt;/ in the project with the game's main.c (standalone, see
-/// <see cref="PlayerSource"/>), its GameData.binchunk (see <see cref="GameDataExporter"/>), the
-/// scripts translated to C when the project has some (scripts.c, see <see cref="GameScripts"/>),
-/// and the executable compiled from them.
+/// <see cref="PlayerSource"/>), its GameData.binchunk (see <see cref="GameDataExporter"/>), and the
+/// executable compiled from them and the project's scripts (its .c files).
 /// </summary>
 public static class GameBuild
 {
@@ -45,14 +45,14 @@ public static class GameBuild
         string mainC = Path.Combine(directory, "main.c");
         File.WriteAllText(mainC, PlayerSource.Amalgamate(engineDirectory));
 
-        string scriptsC = Path.Combine(directory, "scripts.c");
-        bool hasScripts = GameScripts.Translate(project, engineDirectory, scriptsC, log);
-        if (!hasScripts)
-            File.Delete(scriptsC); // from an earlier build
+        // The scripts are compiled with the player, with the API's own C file.
+        List<string> scripts = ScriptCompiler.ScriptFiles(project).ToList();
+        if (scripts.Count > 0)
+            scripts.Add(ScriptCompiler.ApiSource(engineDirectory));
 
         string executable = Path.Combine(directory, PlayerBuilder.ExecutableName(name));
         new PlayerBuilder(engineDirectory, project.Settings.Build.Compiler)
-            .Build(mainC, executable, Path.Combine(project.CacheDirectory, "Player"), log, hasScripts ? scriptsC : null);
+            .Build(mainC, executable, Path.Combine(project.CacheDirectory, "Player"), log, scripts.Count > 0 ? scripts : null);
         return new GameBuildResult(directory, executable, warnings);
     }
 

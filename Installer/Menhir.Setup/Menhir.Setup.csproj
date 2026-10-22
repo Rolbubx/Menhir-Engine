@@ -13,7 +13,6 @@
     <AssemblyName>MenhirSetup</AssemblyName>
     <RootNamespace>Menhir.Setup</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <Version>0.1.0</Version>
     <!-- LibraryImport (WindowsIntegration) generates unsafe code. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>

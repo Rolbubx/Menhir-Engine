@@ -44,6 +44,18 @@ internal sealed class ToolchainFile
     public string Compiler { get; set; } = "";
     public string? DotnetRoot { get; set; }
 
+    public static ToolchainFile? Load(string path)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize(File.ReadAllText(path), ManifestJson.Default.ToolchainFile);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
+        }
+    }
+
     public void Save(string folder) =>
         File.WriteAllText(Path.Combine(folder, FileName), JsonSerializer.Serialize(this, ManifestJson.Default.ToolchainFile));
 }

@@ -17,6 +17,7 @@ editor) compiled with the scripts, and its `GameData.binchunk` ([Engine/README](
 On Windows, run `MenhirSetup.exe` from a release package (made by `Installer/package.sh`, see
 [Installer/README](Installer/README.md)): it asks where to install Menhir and which C compiler (GCC or
 Clang) to use, adds it to the Start menu, and registers an uninstaller in Settings → Apps.
+**File → Update Editor** then updates it from the latest GitHub release and restarts on the open project.
 
 ## Running the editor from the sources
 

@@ -34,6 +34,7 @@ public sealed class EditorApplication : IDisposable
     private List<EditorPanel> _panels = [];
 
     private readonly UnsavedChangesDialog _unsavedChangesDialog = new();
+    private readonly UpdateDialog _updateDialog;
     private readonly SaveSceneDialog _saveSceneDialog;
     private readonly ProjectHub _hub;
     private readonly BuildRunner _build;
@@ -68,6 +69,7 @@ public sealed class EditorApplication : IDisposable
         EditorPaths.EnsureConfigDirectory();
         _preferences = EditorPreferences.Load(EditorPaths.PreferencesFile);
         _saveSceneDialog = new SaveSceneDialog(_context);
+        _updateDialog = new UpdateDialog(ConfirmDiscardChanges, RunUpdate);
         _build = new BuildRunner(_context);
         _play = new PlayMode(_context, _scripts);
         _statusBar = new StatusBar(Log.Messages, ShowConsole);
@@ -201,6 +203,31 @@ public sealed class EditorApplication : IDisposable
         ];
         foreach (EditorPanel panel in _panels)
             panel.IsOpen = _preferences.OpenPanels.TryGetValue(panel.Title, out bool open) ? open : panel.OpenByDefault;
+
+        // Quietly, in the background: the File menu says when a newer Menhir is out.
+        _updateDialog.CheckInBackground();
+    }
+
+    /// <summary>Hands over to the downloaded installer, which updates the editor once it has closed and starts it again.</summary>
+    private void RunUpdate(string setup)
+    {
+        string? installation = Updates.EditorUpdate.InstallationFolder();
+        if (installation == null)
+            return;
+        try
+        {
+            using var current = System.Diagnostics.Process.GetCurrentProcess();
+            System.Diagnostics.Process.Start(Updates.EditorUpdate.Command(setup, installation, current.Id, _context.Project?.RootPath))?.Dispose();
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            Log.Error($"Could not start the update: {e.Message}");
+            return;
+        }
+        Log.Info("Updating: the editor closes and starts again when the update is done.");
+        _play.Stop();
+        _discardChangesOnClose = true; // the user already saved or discarded them
+        _closeRequested = true;
     }
 
     private void ShowConsole() => ShowPanel<ConsolePanel>();
@@ -288,6 +315,7 @@ public sealed class EditorApplication : IDisposable
 
         _unsavedChangesDialog.Draw();
         _saveSceneDialog.Draw();
+        _updateDialog.Draw();
         _hub.DrawModal();
         HandleShortcuts();
         FinishFrame();
@@ -460,6 +488,9 @@ public sealed class EditorApplication : IDisposable
         }
 
         ImGui.Separator();
+        string update = _updateDialog.Available is { } available ? $"Update Editor (Menhir {available.Version} is out)..." : "Update Editor...";
+        if (ImGui.MenuItem(update))
+            _updateDialog.Open();
         if (ImGui.MenuItem("Exit"))
             RequestExit();
     }

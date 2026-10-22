@@ -13,6 +13,12 @@ internal sealed class InstallOptions
     public bool? Desktop { get; set; }
     public bool Launch { get; set; } = true;
     public string? Payload { get; set; }
+    /// <summary>Updating an installation from the editor: its choices are kept, nothing is asked.</summary>
+    public bool Update { get; set; }
+    /// <summary>The editor that started the update: its files are replaced once it has exited.</summary>
+    public int? WaitForProcess { get; set; }
+    /// <summary>Start the editor on this project when done (the one open before the update).</summary>
+    public string? RelaunchProject { get; set; }
 }
 
 /// <summary>
@@ -35,7 +41,10 @@ internal sealed class Installer(InstallOptions options)
 
     public int Run()
     {
-        Ui.ShowLogo($"{ProgramName} {Version} - Setup");
+        Ui.ShowLogo($"{ProgramName} {Version} - {(options.Update ? "Update" : "Setup")}");
+        if (options.Update)
+            UseInstalledChoices();
+        WaitForEditor();
 
         string payload = options.Payload ?? Path.Combine(AppContext.BaseDirectory, "Menhir.zip");
         if (!File.Exists(payload))
@@ -93,6 +102,46 @@ internal sealed class Installer(InstallOptions options)
         }
 
         return Install(archive, folder, compiler, dotnetRoot, startMenu, desktop);
+    }
+
+    /// <summary>For an update: the folder, compiler, .NET and shortcuts of the installation being updated.</summary>
+    private void UseInstalledChoices()
+    {
+        Ui.AcceptDefaults = true;
+        options.Launch = false;
+        string? folder = options.Folder ?? (OperatingSystem.IsWindows() ? WindowsIntegration.InstalledFolder() : null);
+        if (folder == null || Manifest.Load(folder) is not { } manifest)
+            throw new InstallException("There is no installation of Menhir to update (give its folder with --dir).");
+        options.Folder = folder;
+        string toolchain = Path.Combine(folder, ToolchainFile.FileName);
+        if (File.Exists(toolchain) && ToolchainFile.Load(toolchain) is { } previous)
+        {
+            options.Compiler ??= previous.Compiler;
+            options.DotnetRoot ??= previous.DotnetRoot;
+        }
+        if (OperatingSystem.IsWindows())
+        {
+            options.StartMenu ??= manifest.Shortcuts.Contains(WindowsIntegration.StartMenuShortcut, StringComparer.OrdinalIgnoreCase);
+            options.Desktop ??= manifest.Shortcuts.Contains(WindowsIntegration.DesktopShortcut, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    /// <summary>The editor's files cannot be replaced while it runs (Windows locks them).</summary>
+    private void WaitForEditor()
+    {
+        if (options.WaitForProcess is not { } id)
+            return;
+        try
+        {
+            using Process editor = Process.GetProcessById(id);
+            Ui.Info("Waiting for the editor to close...");
+            if (!editor.WaitForExit(TimeSpan.FromMinutes(2)))
+                throw new InstallException("The editor did not close: close it, then run the update again.");
+        }
+        catch (ArgumentException)
+        {
+            // Already gone.
+        }
     }
 
     private string AskFolder(string suggestion)
@@ -280,9 +329,23 @@ internal sealed class Installer(InstallOptions options)
         Console.WriteLine();
         Ui.Write($"  {ProgramName} is installed in {folder}\n", ConsoleColor.Green);
         Ui.Dim($"Editor: {editor}\nThe Hub lists the sample project (Samples/Sandbox) to start with.");
-        if (options.Launch && File.Exists(editor) && !Ui.AcceptDefaults && Ui.Confirm("Start Menhir now?", true))
-            Process.Start(new ProcessStartInfo(editor) { WorkingDirectory = Path.GetDirectoryName(editor)!, UseShellExecute = true })?.Dispose();
+        if (options.RelaunchProject != null && File.Exists(editor))
+            StartEditor(editor, options.RelaunchProject);
+        else if (options.Launch && File.Exists(editor) && !Ui.AcceptDefaults && Ui.Confirm("Start Menhir now?", true))
+            StartEditor(editor, null);
         return 0;
+    }
+
+    /// <summary>Starts the editor (on a project when given), on its own.</summary>
+    public static void StartEditor(string editor, string? project)
+    {
+        var start = new ProcessStartInfo(editor) { WorkingDirectory = Path.GetDirectoryName(editor)!, UseShellExecute = true };
+        if (!string.IsNullOrEmpty(project))
+        {
+            start.ArgumentList.Add("--project");
+            start.ArgumentList.Add(project);
+        }
+        Process.Start(start)?.Dispose();
     }
 
     public static void Delete(string path)

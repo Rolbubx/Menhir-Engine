@@ -1,0 +1,9 @@
+<Project>
+
+  <!-- Menhir's version, for every project: the editor compares it with GitHub's latest release
+       (File > Update Editor), and the installer records it. Release builds get it from the tag (vX.Y.Z). -->
+  <PropertyGroup>
+    <Version>0.2.0</Version>
+  </PropertyGroup>
+
+</Project>

@@ -35,8 +35,23 @@ Options, for scripted installs (`--yes` answers every open question with its def
 ```
 MenhirSetup.exe [--dir <folder>] [--compiler <path|name>] [--dotnet <folder>] [--no-start-menu] [--desktop]
                 [--no-launch] [--payload <Menhir.zip>] [--yes]
+MenhirSetup.exe --update [--dir <folder>] [--wait-pid <editor's process id>] [--relaunch-project <folder>]
 Uninstall.exe [--yes]
 ```
+
+## Updates
+
+**File > Update Editor** looks for the latest release on GitHub (also checked quietly when the editor starts:
+the menu then says a new version is out). It shows what is new; **Update and Restart** asks about unsaved
+changes, downloads the package for this platform, and starts its installer with `--update`: the installer
+waits for the editor to close, replaces the installation (keeping the compiler, the shortcuts and the user's
+changes to the sample) and starts the editor again on the project that was open. An editor run from the
+sources only says what is new (update those with `git pull`).
+
+Releases come from `.github/workflows/release.yml`: pushing a tag `vX.Y.Z` tests, packages (Windows and Linux)
+and publishes the release with `Menhir-Setup-win-x64.zip` and `Menhir-Setup-linux-x64.zip`. The version
+of a build is the tag's (Directory.Build.props has the one of the sources). The editor reads the releases of
+a public repository without any token.
 
 ## Making the package
 

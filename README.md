@@ -10,13 +10,14 @@ editor) compiled with the scripts, and its `GameData.binchunk` ([Engine/README](
 | `Editor/`     | C# editor (Silk.NET + OpenGL 3.3 Core + ImGui docking)    |
 | `Engine/`     | Native C side: game player, scripting API, GLFW, glad ([README](Engine/README.md)) |
 | `Samples/`    | Sample projects for testing the editor                    |
-| `Installer/`  | Windows installer and uninstaller ([README](Installer/README.md)) |
+| `Installer/`  | Installers: Windows (Inno Setup) and console ([README](Installer/README.md)) |
 
 ## Installing
 
-On Windows, run `MenhirSetup.exe` from a release package (made by `Installer/package.sh`, see
-[Installer/README](Installer/README.md)): it asks where to install Menhir and which C compiler (GCC or
-Clang) to use, adds it to the Start menu, and registers an uninstaller in Settings → Apps.
+On Windows, run `Menhir-Setup-win-x64.exe` from the latest GitHub release: a usual Windows installer (Inno
+Setup) that asks where to install Menhir and which C compiler (GCC or Clang) to use, adds it to the Start menu,
+and registers an uninstaller in Settings → Apps. Linux has a console installer (`Menhir-Setup-linux-x64.zip`);
+see [Installer/README](Installer/README.md).
 **File → Update Editor** then updates it from the latest GitHub release and restarts on the open project.
 
 ## Running the editor from the sources

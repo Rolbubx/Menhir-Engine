@@ -69,4 +69,25 @@ public sealed class UpdateTests : IDisposable
         var command = EditorUpdate.Command(setup, "/opt/menhir", 1234, "/home/me/Game");
         Assert.Equal(["--update", "--dir", "/opt/menhir", "--wait-pid", "1234", "--relaunch-project", "/home/me/Game"], command.ArgumentList);
     }
+
+    [Fact]
+    public void TheWindowsInstaller_RunsSilentlyAndRelaunches()
+    {
+        Assert.Equal("Menhir-Setup-win-x64.exe", UpdateChecker.PackageNameFor("win-x64"));
+        Assert.Equal("Menhir-Setup-linux-x64.zip", UpdateChecker.PackageNameFor("linux-x64"));
+
+        var command = EditorUpdate.Command(@"C:\Temp\menhir-update-0.3.0\Menhir-Setup-win-x64.exe",
+            @"C:\Users\Me\AppData\Local\Programs\Menhir", 1234, @"C:\Games\My Game");
+        Assert.Equal(["/SILENT", "/SUPPRESSMSGBOXES", "/NOCANCEL", "/CLOSEAPPLICATIONS", "/NORESTART",
+            @"/DIR=C:\Users\Me\AppData\Local\Programs\Menhir", @"/RELAUNCH=C:\Games\My Game"], command.ArgumentList);
+    }
+
+    [Fact]
+    public void AWindowsInstallation_IsFoundByItsUninstaller()
+    {
+        string editor = Path.Combine(_root, "Menhir", "Editor");
+        Directory.CreateDirectory(editor);
+        File.WriteAllText(Path.Combine(_root, "Menhir", "unins000.exe"), "");
+        Assert.Equal(Path.Combine(_root, "Menhir"), EditorUpdate.InstallationFolder(editor));
+    }
 }

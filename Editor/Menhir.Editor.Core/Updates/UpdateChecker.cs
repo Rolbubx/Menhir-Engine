@@ -26,8 +26,13 @@ public sealed class UpdateChecker(HttpClient http)
         }
     }
 
-    /// <summary>The package's name for this platform, e.g. Menhir-Setup-win-x64.zip.</summary>
-    public static string PackageName => $"Menhir-Setup-{RuntimeInformation.RuntimeIdentifier}.zip";
+    /// <summary>
+    /// The package for this platform: the Windows installer (Menhir-Setup-win-x64.exe, Inno Setup) on Windows,
+    /// else the console installer and its files in a zip (Menhir-Setup-linux-x64.zip).
+    /// </summary>
+    public static string PackageName => PackageNameFor(RuntimeInformation.RuntimeIdentifier);
+
+    public static string PackageNameFor(string rid) => $"Menhir-Setup-{rid}{(rid.StartsWith("win-", StringComparison.Ordinal) ? ".exe" : ".zip")}";
 
     public static HttpClient CreateClient()
     {

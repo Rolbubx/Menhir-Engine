@@ -1,5 +1,6 @@
-# A release for each tag vX.Y.Z: the installer packages (Installer/package.sh) for Windows and Linux, attached to a
-# GitHub release. The editor's File > Update Editor looks for the latest one (Editor/Menhir.Editor.Core/Updates).
+# A release for each tag vX.Y.Z: the installers (Installer/package.sh) attached to a GitHub release:
+# Menhir-Setup-win-x64.exe, the Windows installer (Inno Setup, made on Windows), and Menhir-Setup-linux-x64.zip.
+# The editor's File > Update Editor looks for the latest one (Editor/Menhir.Editor.Core/Updates).
 name: Release
 
 on:
@@ -14,32 +15,71 @@ on:
 permissions:
   contents: write
 
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
 jobs:
-  release:
+  test:
     runs-on: ubuntu-latest
-    env:
-      TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
-
       - name: Test
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq zip libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev  # GameBuildTests compiles GLFW
           dotnet test Menhir.slnx
 
+  windows:
+    needs: test
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Inno Setup
+        run: |
+          [ -x "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ] || choco install innosetup -y --no-progress
+      - name: Package
+        run: Installer/package.sh win-x64 --version "${TAG#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win-x64
+          path: artifacts/Menhir-Setup-win-x64.exe
+
+  linux:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
       - name: Package
         run: |
-          version="${TAG#v}"
-          Installer/package.sh win-x64 --version "$version"
-          Installer/package.sh linux-x64 --version "$version"
+          sudo apt-get update -qq && sudo apt-get install -y -qq zip
+          Installer/package.sh linux-x64 --version "${TAG#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: artifacts/Menhir-Setup-linux-x64.zip
 
+  publish:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$TAG" artifacts/Menhir-Setup-win-x64.zip artifacts/Menhir-Setup-linux-x64.zip \
-            --title "Menhir ${TAG#v}" --generate-notes --target "$GITHUB_SHA"
+          gh release create "$TAG" artifacts/Menhir-Setup-win-x64.exe artifacts/Menhir-Setup-linux-x64.zip \
+            --repo "$GITHUB_REPOSITORY" --title "Menhir ${TAG#v}" --generate-notes --target "$GITHUB_SHA"

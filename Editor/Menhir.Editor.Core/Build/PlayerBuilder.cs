@@ -55,7 +55,7 @@ public sealed class PlayerBuilder
         string glfw = GlfwLibrary(cacheDirectory, log);
         log?.Invoke(scripts == null ? $"Compiling {Path.GetFileName(mainC)}" : $"Compiling {Path.GetFileName(mainC)} and {scripts.Count} script file(s)");
         var arguments = new List<string>(PlayerFlags) { "-O2", mainC, "-I", Path.Combine(GlfwDirectory, "include") };
-        arguments.AddRange(ScriptArguments(scripts));
+        arguments.AddRange(ScriptArguments(scripts, Path.Combine(cacheDirectory, "Scripts")));
         arguments.AddRange([glfw, "-o", executable]);
         arguments.AddRange(Platform.LinkFlags);
         Run(arguments);
@@ -63,11 +63,37 @@ public sealed class PlayerBuilder
 
     /// <summary>Compiles the player without OpenGL or a window (only <c>--dump</c> and <c>--simulate</c> work), for tests.</summary>
     public void BuildHeadless(string mainC, string executable, IReadOnlyList<string>? scripts = null) =>
-        Run([.. PlayerFlags, "-O1", "-DMENHIR_HEADLESS", mainC, .. ScriptArguments(scripts), "-o", executable, "-lm"]);
+        Run([.. PlayerFlags, "-O1", "-DMENHIR_HEADLESS", mainC, .. ScriptArguments(scripts, executable + "-scripts"),
+             "-o", executable, "-lm"]);
 
-    /// <summary>With scripts: MENHIR_SCRIPTS, the API's headers and the scripts' files (each its own translation unit).</summary>
-    private IEnumerable<string> ScriptArguments(IReadOnlyList<string>? scripts) =>
-        scripts == null ? [] : ["-DMENHIR_SCRIPTS", "-I", ScriptingInclude, .. scripts];
+    /// <summary>
+    /// With scripts: MENHIR_SCRIPTS and the API's headers for main.c, and the scripts compiled on their own
+    /// into <paramref name="objectDirectory"/>, with menhir.h included first (see <see cref="ScriptFlags"/>).
+    /// </summary>
+    private List<string> ScriptArguments(IReadOnlyList<string>? scripts, string objectDirectory)
+    {
+        if (scripts == null)
+            return [];
+        Directory.CreateDirectory(objectDirectory);
+        var arguments = new List<string> { "-DMENHIR_SCRIPTS", "-I", ScriptingInclude };
+        for (int i = 0; i < scripts.Count; i++)
+        {
+            string obj = Path.Combine(objectDirectory, $"{i}-{Path.GetFileNameWithoutExtension(scripts[i])}.o");
+            Run([.. PlayerFlags, .. ScriptFlags(EngineDirectory), "-O2", "-c", scripts[i], "-o", obj]);
+            arguments.Add(obj);
+        }
+        return arguments;
+    }
+
+    /// <summary>
+    /// How scripts are compiled, for the game and for Play mode: menhir.h is included before each file,
+    /// so a script does not need its own #include &lt;menhir.h&gt;.
+    /// </summary>
+    public static string[] ScriptFlags(string engineDirectory)
+    {
+        string include = Path.Combine(engineDirectory, "Scripting", "include");
+        return ["-I", include, "-include", Path.Combine(include, "menhir.h")];
+    }
 
     private string GlfwLibrary(string cacheDirectory, Action<string>? log)
     {

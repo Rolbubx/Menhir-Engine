@@ -61,8 +61,8 @@ public static partial class ScriptCompiler
         {
             // The game's flags (PlayerBuilder), so Play mode computes what the game does.
             "-std=gnu11", "-Wall", "-ffp-contract=off", "-O1", "-g", "-shared", "-DMH_BUILD_LIBRARY",
-            "-I", ApiInclude(engineDirectory),
         };
+        arguments.AddRange(Build.PlayerBuilder.ScriptFlags(engineDirectory));
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             arguments.Add("-fPIC");
         arguments.AddRange(ScriptFiles(project));

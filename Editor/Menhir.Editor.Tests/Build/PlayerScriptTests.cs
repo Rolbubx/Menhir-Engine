@@ -204,6 +204,8 @@ public sealed class PlayerScriptTests : IDisposable
         File.WriteAllText(Path.Combine(scripts, "Mover.c"), Mover);
         File.WriteAllText(Path.Combine(scripts, "Others.c"), Others);
         File.WriteAllText(Path.Combine(scripts, "Shared.h"), SharedHeader);
+        // No #include: the compiler adds menhir.h to every script.
+        File.WriteAllText(Path.Combine(scripts, "Bare.c"), "typedef struct { int n; } Bare;\nMH_SCRIPT(Bare);\n");
         return project;
     }
 
@@ -240,7 +242,7 @@ public sealed class PlayerScriptTests : IDisposable
         Assert.True(compiled.Success, string.Join("\n", compiled.Diagnostics));
         IReadOnlyList<ScriptType> types = ScriptLibrary.ReadTypes(compiled.LibraryPath!);
 
-        Assert.Equal(["Dice", "Follower", "Mover", "Spawned"], types.Select(t => t.Name));
+        Assert.Equal(["Bare", "Dice", "Follower", "Mover", "Spawned"], types.Select(t => t.Name));
         ScriptType mover = types.Single(t => t.Name == "Mover");
         Assert.Equal(["count", "speed", "active", "label", "mode", "offset", "direction", "tint", "broken"], mover.Fields.Select(f => f.Name));
         ScriptField speed = mover.Fields[1];

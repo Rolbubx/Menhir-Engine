@@ -28,7 +28,9 @@ static void Spinner_update(Spinner *self, mh_entity entity)
 MH_SCRIPT(Spinner, MH_FIELDS(Spinner_fields), MH_UPDATE(Spinner_update));
 ```
 
-**Project → Create → C Script** makes a file like this one. The same code runs in two places:
+**Project → Create → C Script** makes a file like this one. The compiler includes `menhir.h` before every
+script by itself (`-include menhir.h`), so a `.c` file made elsewhere works without the `#include` line; the
+template keeps it so that code editors (VS Code, CLion...) know the API. The same code runs in two places:
 
 - **Play mode**: the editor compiles the scripts into a shared library (`Cache/Scripts/GameScripts.so`,
   `.dll` on Windows) and loads a fresh copy of it at each Play. The scripts run inside the editor, so a

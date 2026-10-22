@@ -1,5 +1,6 @@
 # A release for each tag vX.Y.Z: the installers (Installer/package.sh) attached to a GitHub release:
-# Menhir-Setup-win-x64.exe, the Windows installer (Inno Setup, made on Windows), and Menhir-Setup-linux-x64.zip.
+# Menhir-Setup-win-x64.exe, the Windows installer (Inno Setup, made on Windows), and the console installer's
+# Menhir-Setup-linux-x64.zip and Menhir-Setup-win-x64.zip (which updates Windows installations made by it).
 # The editor's File > Update Editor looks for the latest one (Editor/Menhir.Editor.Core/Updates).
 name: Release
 
@@ -64,10 +65,13 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq zip
           Installer/package.sh linux-x64 --version "${TAG#v}"
+          Installer/package.sh win-x64 --zip --version "${TAG#v}"  # updates installations made by the console installer
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-x64
-          path: artifacts/Menhir-Setup-linux-x64.zip
+          name: zips
+          path: |
+            artifacts/Menhir-Setup-linux-x64.zip
+            artifacts/Menhir-Setup-win-x64.zip
 
   publish:
     needs: [windows, linux]
@@ -81,5 +85,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$TAG" artifacts/Menhir-Setup-win-x64.exe artifacts/Menhir-Setup-linux-x64.zip \
+          gh release create "$TAG" artifacts/Menhir-Setup-win-x64.exe artifacts/Menhir-Setup-win-x64.zip artifacts/Menhir-Setup-linux-x64.zip \
             --repo "$GITHUB_REPOSITORY" --title "Menhir ${TAG#v}" --generate-notes --target "$GITHUB_SHA"

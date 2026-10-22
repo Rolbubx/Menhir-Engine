@@ -28,6 +28,9 @@ public static class EditorUpdate
         return null;
     }
 
+    /// <summary>An installation made by the console installer (it has install.json), rather than the Windows one.</summary>
+    public static bool IsConsoleInstallation(string folder) => File.Exists(Path.Combine(folder, "install.json"));
+
     /// <summary>The Windows installer (Inno Setup), rather than the console one.</summary>
     private static bool IsWindowsInstaller(string setup) => setup.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
                                                            setup[(setup.LastIndexOfAny(['/', '\\']) + 1)..].StartsWith("Menhir-Setup-", StringComparison.Ordinal);

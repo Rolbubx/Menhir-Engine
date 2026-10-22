@@ -87,7 +87,8 @@ An editor run from the sources only says what is new (update those with `git pul
 
 Releases come from `.github/workflows/release.yml`: pushing a tag `vX.Y.Z` (or running it by hand with a tag)
 tests, makes the Windows installer on a Windows runner and the Linux package on Linux, and publishes the
-release with `Menhir-Setup-win-x64.exe` and `Menhir-Setup-linux-x64.zip`. The version of a build is the tag's
+release with `Menhir-Setup-win-x64.exe`, `Menhir-Setup-linux-x64.zip` and `Menhir-Setup-win-x64.zip` (an
+installation made by the console installer, as before 0.2.1 on Windows, keeps updating with it). The version of a build is the tag's
 (Directory.Build.props has the one of the sources). The editor reads the releases of a public repository
 without any token.
 

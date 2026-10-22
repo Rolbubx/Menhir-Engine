@@ -28,11 +28,14 @@ public sealed class UpdateChecker(HttpClient http)
 
     /// <summary>
     /// The package for this platform: the Windows installer (Menhir-Setup-win-x64.exe, Inno Setup) on Windows,
-    /// else the console installer and its files in a zip (Menhir-Setup-linux-x64.zip).
+    /// else the console installer and its files in a zip (Menhir-Setup-linux-x64.zip). An installation made by
+    /// the console installer (before 0.2.1 on Windows) keeps updating with it.
     /// </summary>
-    public static string PackageName => PackageNameFor(RuntimeInformation.RuntimeIdentifier);
+    public static string PackageName => PackageNameFor(RuntimeInformation.RuntimeIdentifier,
+        EditorUpdate.InstallationFolder() is { } folder && EditorUpdate.IsConsoleInstallation(folder));
 
-    public static string PackageNameFor(string rid) => $"Menhir-Setup-{rid}{(rid.StartsWith("win-", StringComparison.Ordinal) ? ".exe" : ".zip")}";
+    public static string PackageNameFor(string rid, bool consoleInstallation = false) =>
+        $"Menhir-Setup-{rid}{(rid.StartsWith("win-", StringComparison.Ordinal) && !consoleInstallation ? ".exe" : ".zip")}";
 
     public static HttpClient CreateClient()
     {

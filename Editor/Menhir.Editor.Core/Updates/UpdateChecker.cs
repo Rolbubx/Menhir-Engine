@@ -64,9 +64,13 @@ public sealed class UpdateChecker(HttpClient http)
         {
             if (asset.GetProperty("name").GetString() != package)
                 continue;
+            // The API's address of the asset (it redirects to the file) works wherever the API does; the
+            // browser's address is the fallback.
+            string url = asset.TryGetProperty("url", out JsonElement api) && api.GetString() is { Length: > 0 } a
+                ? a
+                : asset.GetProperty("browser_download_url").GetString()!;
             return new Release(version, tag, root.TryGetProperty("name", out JsonElement name) ? name.GetString() ?? tag : tag,
-                root.TryGetProperty("body", out JsonElement body) ? body.GetString() ?? "" : "",
-                asset.GetProperty("browser_download_url").GetString()!, asset.GetProperty("size").GetInt64());
+                root.TryGetProperty("body", out JsonElement body) ? body.GetString() ?? "" : "", url, asset.GetProperty("size").GetInt64());
         }
         return null;
     }
@@ -86,7 +90,11 @@ public sealed class UpdateChecker(HttpClient http)
     /// <summary>Downloads the release's package to <paramref name="path"/>, reporting the fraction done (0 to 1).</summary>
     public async Task DownloadAsync(Release release, string path, IProgress<double>? progress, CancellationToken cancel = default)
     {
-        using HttpResponseMessage response = await http.GetAsync(release.PackageUrl, HttpCompletionOption.ResponseHeadersRead, cancel);
+        using var request = new HttpRequestMessage(HttpMethod.Get, release.PackageUrl);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
+        using HttpResponseMessage response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            throw new HttpRequestException($"GitHub has no {UpdateChecker.PackageName} for everyone to download: is {Repository} public?");
         response.EnsureSuccessStatusCode();
         long total = response.Content.Headers.ContentLength ?? release.PackageSize;
         string partial = path + ".part";

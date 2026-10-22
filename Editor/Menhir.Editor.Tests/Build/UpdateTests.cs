@@ -16,7 +16,7 @@ public sealed class UpdateTests : IDisposable
           "tag_name": "v0.3.1", "name": "Menhir 0.3.1", "body": "Audio!", "draft": false, "prerelease": false,
           "assets": [
             { "name": "Menhir-Setup-linux-x64.zip", "size": 100, "browser_download_url": "https://example.com/linux.zip" },
-            { "name": "Menhir-Setup-win-x64.zip", "size": 200, "browser_download_url": "https://example.com/win.zip" }
+            { "name": "Menhir-Setup-win-x64.zip", "size": 200, "url": "https://api.github.com/assets/2", "browser_download_url": "https://example.com/win.zip" }
           ]
         }
         """;
@@ -25,8 +25,9 @@ public sealed class UpdateTests : IDisposable
     public void ARelease_GivesThisPlatformsPackage()
     {
         Release release = UpdateChecker.Parse(LatestRelease, "Menhir-Setup-win-x64.zip")!;
-        Assert.Equal((new Version(0, 3, 1), "Menhir 0.3.1", "Audio!", "https://example.com/win.zip", 200L),
+        Assert.Equal((new Version(0, 3, 1), "Menhir 0.3.1", "Audio!", "https://api.github.com/assets/2", 200L),
             (release.Version, release.Name, release.Notes, release.PackageUrl, release.PackageSize));
+        Assert.Equal("https://example.com/linux.zip", UpdateChecker.Parse(LatestRelease, "Menhir-Setup-linux-x64.zip")!.PackageUrl);
         Assert.Null(UpdateChecker.Parse(LatestRelease, "Menhir-Setup-osx-arm64.zip"));
         Assert.Null(UpdateChecker.Parse(LatestRelease.Replace("\"prerelease\": false", "\"prerelease\": true"), "Menhir-Setup-win-x64.zip"));
     }

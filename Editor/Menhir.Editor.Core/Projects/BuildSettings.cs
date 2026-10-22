@@ -21,6 +21,10 @@ public sealed class BuildSettings
     [Range(64, 4320)]
     public int WindowHeight { get; set; } = 720;
 
-    /// <summary>The C compiler (GCC or Clang) that compiles the game.</summary>
-    public string Compiler { get; set; } = "cc";
+    /// <summary>
+    /// The C compiler (GCC or Clang, a path or a name on the PATH) for the scripts and the game; empty for
+    /// the editor's (chosen when Menhir was installed, see Build/Toolchain.cs).
+    /// </summary>
+    [Tooltip("GCC or Clang: a path, or a name on the PATH. Empty: the editor's compiler.")]
+    public string Compiler { get; set; } = "";
 }

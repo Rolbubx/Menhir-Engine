@@ -10,10 +10,17 @@ editor) compiled with the scripts, and its `GameData.binchunk` ([Engine/README](
 | `Editor/`     | C# editor (Silk.NET + OpenGL 3.3 Core + ImGui docking)    |
 | `Engine/`     | Native C side: game player, scripting API, GLFW, glad ([README](Engine/README.md)) |
 | `Samples/`    | Sample projects for testing the editor                    |
+| `Installer/`  | Windows installer and uninstaller ([README](Installer/README.md)) |
 
-## Running the editor
+## Installing
 
-Requires the .NET 10 SDK.
+On Windows, run `MenhirSetup.exe` from a release package (made by `Installer/package.sh`, see
+[Installer/README](Installer/README.md)): it asks where to install Menhir and which C compiler (GCC or
+Clang) to use, adds it to the Start menu, and registers an uninstaller in Settings → Apps.
+
+## Running the editor from the sources
+
+Requires the .NET 10 SDK, and GCC or Clang for the scripts and builds.
 
 ```sh
 dotnet run --project Editor/Menhir.Editor

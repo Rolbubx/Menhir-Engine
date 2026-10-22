@@ -4,4 +4,7 @@
     <Project Path="Editor/Menhir.Editor.Tests/Menhir.Editor.Tests.csproj" />
     <Project Path="Editor/Menhir.Editor/Menhir.Editor.csproj" />
   </Folder>
+  <Folder Name="/Installer/">
+    <Project Path="Installer/Menhir.Setup/Menhir.Setup.csproj" />
+  </Folder>
 </Solution>

@@ -16,10 +16,11 @@ public sealed class BuildException(string message) : Exception(message);
 public sealed class PlayerBuilder
 {
     /// <param name="engineDirectory">The repository's Engine/ folder.</param>
-    public PlayerBuilder(string engineDirectory, string compiler = "cc")
+    /// <param name="compiler">A project's compiler setting; empty or null for the editor's (<see cref="Toolchain"/>).</param>
+    public PlayerBuilder(string engineDirectory, string? compiler = null)
     {
         EngineDirectory = engineDirectory;
-        Compiler = string.IsNullOrWhiteSpace(compiler) ? "cc" : compiler.Trim();
+        Compiler = Toolchain.ResolveCompiler(compiler);
     }
 
     public string EngineDirectory { get; }
@@ -52,11 +53,12 @@ public sealed class PlayerBuilder
     public void Build(string mainC, string executable, string cacheDirectory, Action<string>? log = null,
         IReadOnlyList<string>? scripts = null)
     {
-        string glfw = GlfwLibrary(cacheDirectory, log);
+        List<string> glfw = GlfwLibrary(cacheDirectory, log);
         log?.Invoke(scripts == null ? $"Compiling {Path.GetFileName(mainC)}" : $"Compiling {Path.GetFileName(mainC)} and {scripts.Count} script file(s)");
         var arguments = new List<string>(PlayerFlags) { "-O2", mainC, "-I", Path.Combine(GlfwDirectory, "include") };
         arguments.AddRange(ScriptArguments(scripts, Path.Combine(cacheDirectory, "Scripts")));
-        arguments.AddRange([glfw, "-o", executable]);
+        arguments.AddRange(glfw);
+        arguments.AddRange(["-o", executable]);
         arguments.AddRange(Platform.LinkFlags);
         Run(arguments);
     }
@@ -95,29 +97,32 @@ public sealed class PlayerBuilder
         return ["-I", include, "-include", Path.Combine(include, "menhir.h")];
     }
 
-    private string GlfwLibrary(string cacheDirectory, Action<string>? log)
+    /// <summary>GLFW as a static library, or as its object files when the compiler has no archiver (ar) at hand.</summary>
+    private List<string> GlfwLibrary(string cacheDirectory, Action<string>? log)
     {
         string directory = Path.Combine(cacheDirectory, $"glfw-3.4-{Platform.Name}");
         string library = Path.Combine(directory, "libglfw3.a");
+        string[] objects = Platform.GlfwSources.Select(f => Path.Combine(directory, Path.GetFileNameWithoutExtension(f) + ".o")).ToArray();
         if (File.Exists(library))
-            return library;
-
-        log?.Invoke("Compiling GLFW (once, then kept in the cache)");
-        Directory.CreateDirectory(directory);
-        var objects = new List<string>();
-        foreach (string file in Platform.GlfwSources)
+            return [library];
+        if (!objects.All(File.Exists))
         {
-            string obj = Path.Combine(directory, Path.GetFileNameWithoutExtension(file) + ".o");
-            var arguments = new List<string> { "-c", "-O2", Path.Combine(GlfwDirectory, "src", file), "-o", obj };
-            arguments.AddRange(Platform.GlfwDefines);
-            Run(arguments);
-            objects.Add(obj);
+            log?.Invoke("Compiling GLFW (once, then kept in the cache)");
+            Directory.CreateDirectory(directory);
+            for (int i = 0; i < objects.Length; i++)
+            {
+                var arguments = new List<string> { "-c", "-O2", Path.Combine(GlfwDirectory, "src", Platform.GlfwSources[i]), "-o", objects[i] };
+                arguments.AddRange(Platform.GlfwDefines);
+                Run(arguments);
+            }
         }
+        if (Toolchain.FindArchiver(Compiler) is not { } archiver)
+            return [.. objects];
         string partial = library + ".tmp";
         File.Delete(partial);
-        RunTool("ar", ["rcs", partial, .. objects]);
+        RunTool(archiver, ["rcs", partial, .. objects]);
         File.Move(partial, library, overwrite: true);
-        return library;
+        return [library];
     }
 
     private void Run(IEnumerable<string> arguments) => RunTool(Compiler, arguments);

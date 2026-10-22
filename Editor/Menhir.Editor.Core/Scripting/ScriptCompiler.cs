@@ -55,7 +55,7 @@ public static partial class ScriptCompiler
     /// <param name="engineDirectory">The repository's Engine/ folder.</param>
     public static ScriptCompileResult CompileLibrary(Project project, string engineDirectory, string library)
     {
-        string compiler = string.IsNullOrWhiteSpace(project.Settings.Build.Compiler) ? "cc" : project.Settings.Build.Compiler.Trim();
+        string compiler = Build.Toolchain.ResolveCompiler(project.Settings.Build.Compiler);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(library))!);
         var arguments = new List<string>
         {

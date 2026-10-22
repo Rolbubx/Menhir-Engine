@@ -28,7 +28,7 @@ jobs:
 
       - name: Test
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq zip
+          sudo apt-get update -qq && sudo apt-get install -y -qq zip libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev  # GameBuildTests compiles GLFW
           dotnet test Menhir.slnx
 
       - name: Package

@@ -19,6 +19,8 @@ public static class AssetImporters
         [".scene"] = Scene,
         [".c"] = Script,
         [".h"] = Script,
+        [".cpp"] = Script,
+        [".hpp"] = Script,
         [".png"] = Texture,
         [".jpg"] = Texture,
         [".jpeg"] = Texture,

@@ -55,18 +55,26 @@ public sealed class PlayerBuilder
     {
         List<string> glfw = GlfwLibrary(cacheDirectory, log);
         log?.Invoke(scripts == null ? $"Compiling {Path.GetFileName(mainC)}" : $"Compiling {Path.GetFileName(mainC)} and {scripts.Count} script file(s)");
-        var arguments = new List<string>(PlayerFlags) { "-O2", mainC, "-I", Path.Combine(GlfwDirectory, "include") };
+        bool cpp = scripts?.Any(IsCpp) == true;
+        var arguments = new List<string>(PlayerFlags) { "-O2", "-I", Path.Combine(GlfwDirectory, "include") };
+        arguments.AddRange(cpp ? AsC([mainC]) : [mainC]);
         arguments.AddRange(ScriptArguments(scripts, Path.Combine(cacheDirectory, "Scripts"), audio: true, log));
         arguments.AddRange(glfw);
         arguments.AddRange(["-o", executable]);
         arguments.AddRange(Platform.LinkFlags);
-        Run(arguments);
+        if (cpp)
+            arguments.AddRange(CxxLinkFlags);
+        RunTool(cpp ? CxxCompiler : Compiler, arguments);
     }
 
     /// <summary>Compiles the player without OpenGL or a window (only <c>--dump</c> and <c>--simulate</c> work), for tests.</summary>
-    public void BuildHeadless(string mainC, string executable, IReadOnlyList<string>? scripts = null) =>
-        Run([.. PlayerFlags, "-O1", "-DMENHIR_HEADLESS", mainC, .. ScriptArguments(scripts, executable + "-scripts", audio: false, null),
-             "-o", executable, "-lm"]);
+    public void BuildHeadless(string mainC, string executable, IReadOnlyList<string>? scripts = null)
+    {
+        bool cpp = scripts?.Any(IsCpp) == true;
+        RunTool(cpp ? CxxCompiler : Compiler,
+            [.. PlayerFlags, "-O1", "-DMENHIR_HEADLESS", .. cpp ? AsC([mainC]) : [mainC],
+             .. ScriptArguments(scripts, executable + "-scripts", audio: false, null), "-o", executable, "-lm"]);
+    }
 
     /// <summary>
     /// With scripts: MENHIR_SCRIPTS and the API's headers for main.c, and the scripts compiled on their own
@@ -81,8 +89,11 @@ public sealed class PlayerBuilder
         for (int i = 0; i < scripts.Count; i++)
         {
             string obj = Path.Combine(objectDirectory, $"{i}-{Path.GetFileNameWithoutExtension(scripts[i])}.o");
-            Run([.. PlayerFlags, .. ScriptFlags(EngineDirectory), "-O2", .. audio ? Array.Empty<string>() : ["-DMENHIR_NO_AUDIO"],
-                 "-c", scripts[i], "-o", obj]);
+            string[] noAudio = audio ? [] : ["-DMENHIR_NO_AUDIO"];
+            if (IsCpp(scripts[i]))
+                RunTool(CxxCompiler, [.. CppScriptFlags(EngineDirectory), "-O2", .. noAudio, "-c", scripts[i], "-o", obj]);
+            else
+                Run([.. PlayerFlags, .. ScriptFlags(EngineDirectory), "-O2", .. noAudio, "-c", scripts[i], "-o", obj]);
             arguments.Add(obj);
         }
         if (audio)
@@ -129,6 +140,28 @@ public sealed class PlayerBuilder
         string include = Path.Combine(engineDirectory, "Scripting", "include");
         return ["-I", include, "-include", Path.Combine(include, "menhir.h")];
     }
+
+    /// <summary>How C++ scripts are compiled (with the C++ compiler, <see cref="Toolchain.CxxCompiler"/>): C++20, menhir.hpp first.</summary>
+    public static string[] CppScriptFlags(string engineDirectory)
+    {
+        string include = Path.Combine(engineDirectory, "Scripting", "include");
+        return ["-std=gnu++20", "-Wall", "-Wno-invalid-offsetof", "-ffp-contract=off", "-I", include,
+                "-include", Path.Combine(include, "menhir.hpp")];
+    }
+
+    /// <summary>A C++ script, by its extension.</summary>
+    public static bool IsCpp(string file) => Path.GetExtension(file).ToLowerInvariant() is ".cpp" or ".cc" or ".cxx";
+
+    /// <summary>
+    /// C files for the C++ compiler: each one after its own -x c (GCC forgets a single -x c after the first
+    /// file when -include is there), then -x none for the objects.
+    /// </summary>
+    public static IEnumerable<string> AsC(IEnumerable<string> cFiles) => [.. cFiles.SelectMany(f => new[] { "-x", "c", f }), "-x", "none"];
+
+    /// <summary>On Windows the C++ library goes inside the program (no DLL to ship with the game).</summary>
+    public static string[] CxxLinkFlags => RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ["-static-libstdc++", "-static-libgcc"] : [];
+
+    public string CxxCompiler => Toolchain.CxxCompiler(Compiler);
 
     /// <summary>GLFW as a static library, or as its object files when the compiler has no archiver (ar) at hand.</summary>
     private List<string> GlfwLibrary(string cacheDirectory, Action<string>? log)

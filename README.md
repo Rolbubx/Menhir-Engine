@@ -1,6 +1,6 @@
 # Menhir Engine
 
-A personal game engine with a Unity-like editor in C#. Games are scripted in C
+A personal game engine with a Unity-like editor in C#. Games are scripted in C or C++
 ([Docs/Scripting.md](Docs/Scripting.md)): the editor's Play mode compiles the scripts into a library it
 loads, and **File → Build** makes a native game: one `main.c` (OpenGL + GLFW, the same rendering as the
 editor) compiled with the scripts, and its `GameData.binchunk` ([Engine/README](Engine/README.md)).
@@ -119,11 +119,12 @@ A component whose type no longer exists is kept as is and saved back unchanged.
 
 ### Scripts and Play mode
 
-Every `.c` file in `Assets/` is part of the project's scripts. In the simple syntax a file is one script
-named after it (`MH_VARS { ... }`, `MH_START() { ... }`, `MH_UPDATE() { ... }`...); the classic one declares a
-struct with `MH_SCRIPT`. Scripts are added to entities (**Add Component → Scripts**), and their fields show in
+Every `.c` and `.cpp` file in `Assets/` is part of the project's scripts. In C++ a script is a class in the
+style of Unity (`class Player : public MenhirEngine { void OnUpdate(MenhirTick dt) { ... } };`); in the simple
+C syntax a file is one script named after it (`MH_VARS { ... }`, `MH_START() { ... }`...); the classic C one
+declares a struct with `MH_SCRIPT`. Scripts are added to entities (**Add Component → Scripts**), and their fields show in
 the Inspector and are saved with the scene. **Add Component** also has the built-in **Physics** (Box Collider,
-Sphere Collider, Rigidbody) and **Audio** (Audio Source) components. **Project → Create → C Script** makes a
+Sphere Collider, Rigidbody) and **Audio** (Audio Source) components. **Project → Create → C++ Script** (or **C Script**) makes a
 script from a template (renaming the new file renames it); double-click opens it with the system's editor. The
 editor compiles the scripts in the background with the C compiler of **Project Settings → Build** (when the
 project opens and whenever a `.c` or `.h` file changes) and lists the errors in the Console. Scripts can spawn

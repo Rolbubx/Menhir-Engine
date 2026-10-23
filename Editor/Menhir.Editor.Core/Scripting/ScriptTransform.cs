@@ -274,13 +274,15 @@ public static partial class ScriptTransform
     };
 
     /// <summary>"{1, 2, 3}" or "MH_VEC3(1, 2, 3)" (any call) as its parts.</summary>
-    private static List<string>? Components(string initializer)
+    internal static List<string>? Components(string initializer)
     {
         string inner;
         if (initializer.StartsWith('{') && initializer.EndsWith('}'))
             inner = initializer[1..^1];
         else if (Regex.Match(initializer, @"^\w+\s*\((?<args>.*)\)$", RegexOptions.Singleline) is { Success: true } call)
             inner = call.Groups["args"].Value;
+        else if (Regex.Match(initializer, @"^\w+\s*\{(?<args>.*)\}$", RegexOptions.Singleline) is { Success: true } braced)
+            inner = braced.Groups["args"].Value;
         else
             return null;
         var parts = new List<string>();
@@ -301,7 +303,7 @@ public static partial class ScriptTransform
         return parts.Any(p => p.Length == 0) ? null : parts;
     }
 
-    private static string CommentAfter(string source, int semicolon)
+    internal static string CommentAfter(string source, int semicolon)
     {
         int lineEnd = source.IndexOf('\n', semicolon);
         string rest = source[(semicolon + 1)..(lineEnd < 0 ? source.Length : lineEnd)].Trim();
@@ -392,7 +394,7 @@ public static partial class ScriptTransform
         return close < 0 ? code.Length : close;
     }
 
-    private static int MatchingBrace(string code, int open)
+    internal static int MatchingBrace(string code, int open)
     {
         char opening = code[open], closing = opening switch { '(' => ')', '[' => ']', _ => '}' };
         int depth = 0;
@@ -407,7 +409,7 @@ public static partial class ScriptTransform
     }
 
     /// <summary>The first <paramref name="c"/> outside brackets, or -1.</summary>
-    private static int TopLevel(string text, char c)
+    internal static int TopLevel(string text, char c)
     {
         for (int i = 0; i < text.Length; i++)
         {
@@ -419,7 +421,7 @@ public static partial class ScriptTransform
         return -1;
     }
 
-    private static (int Line, int Column) Position(string source, int index)
+    internal static (int Line, int Column) Position(string source, int index)
     {
         int line = 1, column = 1;
         for (int i = 0; i < index && i < source.Length; i++)

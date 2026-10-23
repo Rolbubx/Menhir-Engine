@@ -93,6 +93,33 @@ public sealed class Toolchain
         return null;
     }
 
+    /// <summary>
+    /// The C++ compiler that goes with a C compiler, for C++ scripts: g++ for gcc ("x86_64-w64-mingw32-g++"...),
+    /// clang++ for clang, c++ for cc, in the same folder. The C compiler itself when there is no such one.
+    /// </summary>
+    public static string CxxCompiler(string compiler)
+    {
+        string exe = Path.GetExtension(compiler);
+        string name = Path.GetFileNameWithoutExtension(compiler);
+        string? cxx = null;
+        foreach ((string c, string cpp) in new[] { ("gcc", "g++"), ("clang", "clang++"), ("cc", "c++") })
+        {
+            int at = name.LastIndexOf(c, StringComparison.OrdinalIgnoreCase);
+            if (at >= 0 && !name.Contains(cpp, StringComparison.OrdinalIgnoreCase))
+            {
+                cxx = name[..at] + cpp + name[(at + c.Length)..];
+                break;
+            }
+        }
+        if (cxx == null)
+            return compiler;
+        string? folder = Path.GetDirectoryName(compiler);
+        if (string.IsNullOrEmpty(folder))
+            return OnPath(cxx + (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "")) != null ? cxx : compiler;
+        string candidate = Path.Combine(folder, cxx + exe);
+        return File.Exists(candidate) ? candidate : compiler;
+    }
+
     /// <summary>A program found in a folder of the PATH, or null.</summary>
     public static string? OnPath(string fileName)
     {

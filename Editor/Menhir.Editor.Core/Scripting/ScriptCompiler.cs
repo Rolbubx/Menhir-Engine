@@ -25,7 +25,8 @@ public sealed record ScriptCompileResult(bool Success, string? LibraryPath, IRea
 /// </summary>
 public static partial class ScriptCompiler
 {
-    public static IEnumerable<string> ScriptFiles(Project project) => Files(project, "*.c");
+    public static IEnumerable<string> ScriptFiles(Project project) =>
+        Files(project, "*.c").Concat(Files(project, "*.cpp")).Order(StringComparer.Ordinal);
 
     /// <summary>The runtime's components, which are script types too (menhir_physics.c, menhir_audio.c).</summary>
     public static readonly IReadOnlySet<string> BuiltInComponents =
@@ -43,7 +44,8 @@ public static partial class ScriptCompiler
 
     /// <summary>The newest write time of the scripts and their headers (to know when to compile again).</summary>
     public static DateTime LastChange(Project project) =>
-        Files(project, "*.c").Concat(Files(project, "*.h")).Select(File.GetLastWriteTimeUtc)
+        Files(project, "*.c").Concat(Files(project, "*.h")).Concat(Files(project, "*.cpp")).Concat(Files(project, "*.hpp"))
+            .Select(File.GetLastWriteTimeUtc)
             .DefaultIfEmpty(DateTime.MinValue).Max();
 
     /// <summary>
@@ -69,6 +71,36 @@ public static partial class ScriptCompiler
         {
             string display = Path.GetRelativePath(project.RootPath, file).Replace('\\', '/');
             string source = File.ReadAllText(file);
+            if (Build.PlayerBuilder.IsCpp(file))
+            {
+                // C++: each class deriving from MenhirEngine is a script.
+                IReadOnlyList<string> classes = CppScriptTransform.ScriptClasses(source);
+                if (classes.Count == 0)
+                {
+                    files.Add(file);
+                    continue;
+                }
+                bool clash = false;
+                foreach (string c in classes)
+                {
+                    if (names.TryGetValue(c, out string? taken))
+                    {
+                        diagnostics.Add(new ScriptDiagnostic(display, 1, 1, $"Two scripts are named {c} (the other one is in {taken}): rename one.", true));
+                        clash = true;
+                    }
+                    names[c] = display;
+                }
+                ScriptTransformResult cpp = CppScriptTransform.Transform(source, Path.GetFullPath(file), display);
+                diagnostics.AddRange(cpp.Diagnostics);
+                if (clash || cpp.Generated is not { } code)
+                    continue;
+                Directory.CreateDirectory(generatedDirectory);
+                string generatedCpp = Path.Combine(generatedDirectory, Path.GetFileNameWithoutExtension(file) + ".gen.cpp");
+                if (!File.Exists(generatedCpp) || File.ReadAllText(generatedCpp) != code)
+                    File.WriteAllText(generatedCpp, code);
+                files.Add(generatedCpp);
+                continue;
+            }
             if (!ScriptTransform.IsSimple(source))
             {
                 files.Add(file);
@@ -136,6 +168,36 @@ public static partial class ScriptCompiler
                 return new ScriptCompileResult(false, null, [.. prepared, new ScriptDiagnostic("", 0, 0, e.Message, true)], "");
             }
         }
+        // C++ scripts first, each into an object with the C++ compiler.
+        string cxx = Build.Toolchain.CxxCompiler(compiler);
+        string objects = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(library))!, "Generated", "obj");
+        var linked = new List<string>();
+        string output = "";
+        foreach (string cpp in scripts.Where(Build.PlayerBuilder.IsCpp))
+        {
+            Directory.CreateDirectory(objects);
+            string obj = Path.Combine(objects, Path.GetFileNameWithoutExtension(cpp) + ".o");
+            var cppArguments = new List<string>(Build.PlayerBuilder.CppScriptFlags(engineDirectory)) { "-O1", "-g", "-DMH_BUILD_LIBRARY" };
+            if (pic)
+                cppArguments.Add("-fPIC");
+            if (audio == null)
+                cppArguments.Add("-DMENHIR_NO_AUDIO");
+            cppArguments.AddRange(["-c", cpp, "-o", obj]);
+            (int cppExit, string cppOutput, string? cppError) = RunCompiler(cxx, cppArguments);
+            if (cppError != null)
+                return new ScriptCompileResult(false, null, [.. prepared, new ScriptDiagnostic("", 0, 0, cppError, true)], "");
+            output += cppOutput;
+            if (cppExit != 0)
+            {
+                List<ScriptDiagnostic> failed = [.. prepared, .. ParseDiagnostics(output, project.RootPath)];
+                if (!failed.Any(d => d.IsError))
+                    failed.Add(new ScriptDiagnostic("", 0, 0, "The C++ scripts could not be compiled:\n" + cppOutput.Trim(), true));
+                return new ScriptCompileResult(false, null, failed, output);
+            }
+            linked.Add(obj);
+        }
+        bool withCpp = linked.Count > 0;
+
         var arguments = new List<string>
         {
             // The game's flags (PlayerBuilder), so Play mode computes what the game does.
@@ -146,40 +208,49 @@ public static partial class ScriptCompiler
             arguments.Add("-fPIC");
         if (audio == null)
             arguments.Add("-DMENHIR_NO_AUDIO");
-        arguments.AddRange(scripts);
-        arguments.AddRange(ApiSources(engineDirectory));
+        List<string> cSources = [.. scripts.Where(s => !Build.PlayerBuilder.IsCpp(s)), .. ApiSources(engineDirectory)];
+        arguments.AddRange(withCpp ? Build.PlayerBuilder.AsC(cSources) : cSources);
+        arguments.AddRange(linked);
         if (audio != null)
             arguments.Add(audio);
         arguments.AddRange(["-o", library, "-lm"]);
         if (pic)
             arguments.AddRange(["-lpthread", "-ldl"]);
+        if (withCpp)
+            arguments.AddRange(Build.PlayerBuilder.CxxLinkFlags);
 
-        var start = new ProcessStartInfo(compiler) { RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (string argument in arguments)
-            start.ArgumentList.Add(argument);
-        string output;
-        int exitCode;
-        try
-        {
-            using Process process = Process.Start(start) ?? throw new IOException($"{compiler} did not start.");
-            Task<string> errors = process.StandardError.ReadToEndAsync();
-            output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit();
-            output += errors.Result;
-            exitCode = process.ExitCode;
-        }
-        catch (System.ComponentModel.Win32Exception e)
-        {
-            return new ScriptCompileResult(false, null,
-                [new ScriptDiagnostic("", 0, 0, $"Could not start the C compiler '{compiler}' ({e.Message}). Install GCC or Clang, " +
-                                                "or set the compiler in Project Settings → Build.", true)], "");
-        }
+        string tool = withCpp ? cxx : compiler;
+        (int exitCode, string linkOutput, string? startError) = RunCompiler(tool, arguments);
+        if (startError != null)
+            return new ScriptCompileResult(false, null, [.. prepared, new ScriptDiagnostic("", 0, 0, startError, true)], "");
+        output += linkOutput;
 
         List<ScriptDiagnostic> diagnostics = [.. prepared, .. ParseDiagnostics(output, project.RootPath)];
         bool success = exitCode == 0 && File.Exists(library);
         if (!success && !diagnostics.Any(d => d.IsError))
             diagnostics.Add(new ScriptDiagnostic("", 0, 0, "The scripts could not be compiled:\n" + output.Trim(), true));
         return new ScriptCompileResult(success, success ? library : null, diagnostics, output);
+    }
+
+    /// <summary>Runs the compiler: its exit code and output, or why it did not start.</summary>
+    private static (int ExitCode, string Output, string? StartError) RunCompiler(string compiler, List<string> arguments)
+    {
+        var start = new ProcessStartInfo(compiler) { RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (string argument in arguments)
+            start.ArgumentList.Add(argument);
+        try
+        {
+            using Process process = Process.Start(start) ?? throw new IOException($"{compiler} did not start.");
+            Task<string> errors = process.StandardError.ReadToEndAsync();
+            string output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            return (process.ExitCode, output + errors.Result, null);
+        }
+        catch (System.ComponentModel.Win32Exception e)
+        {
+            return (-1, "", $"Could not start the compiler '{compiler}' ({e.Message}). Install GCC or Clang (with g++ or clang++ " +
+                            "for C++ scripts), or set the compiler in Project Settings → Build.");
+        }
     }
 
     // GCC and Clang: "path/file.c:12:5: error: message" (Windows paths have a drive letter).

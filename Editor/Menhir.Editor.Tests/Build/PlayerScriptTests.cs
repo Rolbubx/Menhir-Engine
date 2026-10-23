@@ -342,7 +342,7 @@ public sealed class PlayerScriptTests : IDisposable
         dump
         """;
 
-    private static Scene ArcadeScene()
+    private static Scene ArcadeScene(string playerScript = "Spinner")
     {
         var scene = new Scene();
         Entity Add(string name, Vector3 position, params Component[] components)
@@ -354,7 +354,7 @@ public sealed class PlayerScriptTests : IDisposable
         }
         ScriptComponent Script(string name, Dictionary<string, JsonElement>? fields = null) => new() { ScriptName = name, Fields = fields ?? new() };
 
-        Add("Player", Vector3.Zero, Script("Spinner", new() { ["lives"] = J(5) }));
+        Add("Player", Vector3.Zero, Script(playerScript, new() { ["lives"] = J(5) }));
         Add("Floor", Vector3.Zero, Script("BoxCollider", new() { ["size"] = J(new[] { 10f, 1f, 10f }) }));
         Add("Ball", new Vector3(0, 3, 0), Script("SphereCollider"), Script("Rigidbody", new() { ["bounciness"] = J(0.5f) }), Script("Ball"));
         Add("Zone", new Vector3(0, 1.75f, 0), Script("BoxCollider", new() { ["size"] = J(new[] { 2f, 0.5f, 2f }), ["is_trigger"] = J(true) }));
@@ -396,6 +396,152 @@ public sealed class PlayerScriptTests : IDisposable
         Assert.True(native.Count == editor.Count, $"The game printed:\n{Show(native)}\n\nPlay mode printed:\n{Show(editor)}");
         for (int i = 0; i < native.Count; i++)
             Assert.True(Same(editor[i], native[i]), $"Line {i}: Play mode printed\n  {editor[i]}\nthe game printed\n  {native[i]}\n\n{Show(native)}");
+    }
+
+    private const string CppScripts = """
+        class Hero : public MenhirEngine {
+        public:
+            float speed = 90;            // MH_RANGE(0, 360) Degrees per second
+            MenhirPos jump { 0, 5, 0 };
+            MenhirColor tint { 1, 0.5f, 0.25f };
+            MenhirText title = "hero";
+            MenhirStyle style = MenhirStyle::EaseOut;
+            int lives = 3;
+            bool flying = false;
+            int hidden = 7;              // MH_HIDE
+
+            void OnLoad() {
+                Log("load %s %s speed %.0f lives %d style %d jump %.0f %.0f %.0f tint %.2f hidden %d", Name(), title, speed, lives,
+                    (int)style, jump.x, jump.y, jump.z, tint.a, hidden);
+                Rotate(MenhirStyle::Linear, MenhirAngles { 0, 90, 0 }, 0.5f).OnComplete([this] {
+                    Log("turned to %.1f on frame %d", Rotation().y, Frame());
+                    Move(style, MenhirPos { 0, 0, -2 }, 0.3f);
+                });
+                Every(0.1f, [this] { ticks++; });
+                StartCoroutine(Sequence());
+                MenhirObject lamp = Find("Lamp");
+                MenhirReference ref = &lamp;
+                Log("lamp %s valid %d children %d", ref->Name(), (int)ref->IsValid(), lamp.ChildCount());
+            }
+
+            MenhirCoroutine Sequence() {
+                int local = 41;
+                Log("sequence begins");
+                co_await Wait(0.25f);
+                local++;
+                Log("sequence waited, ticks %d, local %d", ticks, local);
+                co_await NextFrame();
+                MenhirObject copy = Find("Crate").Spawn(MenhirPos { 3, 5, 0 });
+                Log("spawned %s with %d child, lid %s", copy.Name(), copy.ChildCount(), copy.FindChild("Lid").Name());
+                co_await Wait(0.1f);
+                Find("Lamp").SetActive(false);
+                Find("Old Crate").Destroy();
+                Find("Ball").Send("Hello", 42);
+                co_await Until([] { return !Find("Old Crate"); });
+                Log("old crate gone on frame %d", Frame());
+            }
+
+            void OnFixedUpdate(MenhirTick dt) { steps++; (void)dt; }
+
+            void OnUpdate(MenhirTick dt) {
+                Find("Lamp").Spin({ 0, speed, 0 });
+                if (KeyDown("space"))
+                    Log("space: %d steps, %d ticks, dt %.3f", steps, ticks, dt);
+            }
+
+            void OnGameClose(MenhirTick t) { Log("closing after %.2f s and %d fixed steps", t, steps); }
+
+        private:
+            int ticks = 0;
+            int steps = 0;
+        };
+
+        class Ball : public MenhirEngine {
+        public:
+            int bounces = 0;
+
+            void OnCollisionEnter(MenhirOther other) {
+                if (++bounces <= 3)
+                    Log("%s hits %s (%d) at %.2f", Name(), other.Name(), bounces, Position().y);
+            }
+            void OnTriggerEnter(MenhirOther other) { Log("%s enters %s", Name(), other.Name()); }
+            void OnTriggerExit(MenhirOther other) { Log("%s leaves %s", Name(), other.Name()); }
+            void OnMessage(const char *name, MenhirAny value) { Log("%s got %s %d", Name(), name, value.Int()); }
+
+            void OnUpdate() {
+                MenhirHit hit;
+                if (Frame() == 30 && Raycast({ 0, 10, 0 }, MenhirVec3::Down(), 50, hit))
+                    Log("ray hits %s at %.2f", hit.object.Name(), hit.distance);
+                if (Frame() == 31) {
+                    Hero *hero = Find("Player").Get<Hero>();
+                    Log("hero has %d lives", hero ? hero->lives : -1);
+                }
+            }
+
+            void OnDestroy() { Log("%s destroyed", Name()); }
+        };
+        """;
+
+    [Fact]
+    public void CppScripts_RunTheSameInBoth()
+    {
+        Project project = Project.Create(_root, "Arcade");
+        string scripts = Path.Combine(project.Assets.AssetsDirectory, "Scripts");
+        Directory.CreateDirectory(scripts);
+        File.WriteAllText(Path.Combine(scripts, "Arcade.cpp"), CppScripts);
+        BuildScene[] scenes = [new("Arcade", ArcadeScene("Hero"))];
+
+        List<string> native = Native(project, scenes, ArcadeInput);
+        List<string> editor = Editor(project, scenes, ArcadeInput);
+
+        string Show(List<string> lines) => string.Join("\n", lines);
+        Assert.Contains("log 0 load Player hero speed 90 lives 5 style 2 jump 0 5 0 tint 1.00 hidden 7", native);
+        Assert.Contains("log 0 lamp Lamp valid 1 children 0", native);
+        Assert.Contains("log 0 sequence waited, ticks 2, local 42", native);
+        Assert.Contains(native, l => l.StartsWith("log 0 turned to 90.0 on frame", StringComparison.Ordinal));
+        Assert.Contains("log 0 spawned Crate with 1 child, lid Lid", native);
+        Assert.Contains("log 0 Ball got Hello 42", native);
+        Assert.Contains("log 0 Old Crate destroyed", native);
+        Assert.Contains(native, l => l.StartsWith("log 0 old crate gone on frame", StringComparison.Ordinal));
+        Assert.Contains(native, l => l.StartsWith("log 0 Ball hits Floor (1)", StringComparison.Ordinal));
+        Assert.Contains("log 0 Ball enters Zone", native);
+        Assert.Contains(native, l => l.StartsWith("log 0 ray hits Ball", StringComparison.Ordinal));
+        Assert.Contains("log 0 hero has 5 lives", native);
+        Assert.Contains(native, l => l.StartsWith("log 0 space: ", StringComparison.Ordinal));
+        Assert.Contains(native, l => l.StartsWith("log 0 closing after ", StringComparison.Ordinal));
+        Assert.True(native.Count == editor.Count, $"The game printed:\n{Show(native)}\n\nPlay mode printed:\n{Show(editor)}");
+        for (int i = 0; i < native.Count; i++)
+            Assert.True(Same(editor[i], native[i]), $"Line {i}: Play mode printed\n  {editor[i]}\nthe game printed\n  {native[i]}\n\n{Show(native)}");
+    }
+
+    [Fact]
+    public void CppScripts_FieldsAreThePublicVariables()
+    {
+        Project project = Project.Create(_root, "Fields");
+        File.WriteAllText(Path.Combine(project.Assets.AssetsDirectory, "Arcade.cpp"), CppScripts);
+        ScriptCompileResult compiled = ScriptCompiler.CompileLibrary(project, Engine, Path.Combine(_root, "lib" + ScriptCompiler.LibraryExtension), noAudio: true);
+        Assert.True(compiled.Success, string.Join("\n", compiled.Diagnostics));
+        ScriptType hero = ScriptLibrary.ReadTypes(compiled.LibraryPath!).Single(t => t.Name == "Hero");
+        Assert.Equal(["speed", "jump", "tint", "title", "style", "lives", "flying"], hero.Fields.Select(f => f.Name));
+        Assert.Equal((0f, 360f, "Degrees per second"), (hero.Fields[0].Min!.Value, hero.Fields[0].Max!.Value, hero.Fields[0].Tooltip));
+        Assert.Equal(new Vector3(0, 5, 0), ScriptFields.DefaultValue(hero.Fields[1]));
+        Assert.Equal(new Vector4(1, 0.5f, 0.25f, 1), ScriptFields.DefaultValue(hero.Fields[2]));
+        Assert.Equal("hero", ScriptFields.DefaultValue(hero.Fields[3]));
+        Assert.Equal((ScriptFieldKind.Enum, 2), (hero.Fields[4].Kind, ScriptFields.DefaultValue(hero.Fields[4])));
+        Assert.Equal("EaseOut", hero.Fields[4].Options[2]);
+    }
+
+    [Fact]
+    public void CppCompileErrors_PointAtTheScript()
+    {
+        Project project = Project.Create(_root, "Broken");
+        File.WriteAllText(Path.Combine(project.Assets.AssetsDirectory, "Bad.cpp"),
+            "class Bad : public MenhirEngine {\npublic:\n    void OnUpdate(MenhirTick dt) {\n        nope();\n    }\n};\n");
+        ScriptCompileResult result = ScriptCompiler.CompileLibrary(project, Engine, Path.Combine(_root, "bad" + ScriptCompiler.LibraryExtension), noAudio: true);
+        Assert.False(result.Success);
+        ScriptDiagnostic error = result.Errors.First();
+        Assert.Equal(("Assets/Bad.cpp", 4), (error.File, error.Line));
+        Assert.Contains("nope", error.Message);
     }
 
     [Fact]

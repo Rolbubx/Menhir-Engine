@@ -1,12 +1,15 @@
 # Scripting
 
-Games are scripted in C. The `.c` files in a project's `Assets/` folder are its scripts (with any `.h`
-files they include). There are two ways to write one:
+Games are scripted in C or C++. The `.c` and `.cpp` files in a project's `Assets/` folder are its scripts
+(with any `.h` and `.hpp` files they include). There are three ways to write one:
 
-- **The simple syntax** (what **Project → Create → C Script** makes): one file is one script, named after
-  the file; its variables go in `MH_VARS`, and each callback is written like a function, `MH_START() { ... }`.
-- **The classic syntax**: a struct, its functions and `MH_SCRIPT(...)` to declare them. Several scripts can
-  share a file. Everything below works with both: the simple syntax is made of macros over the classic API.
+- **C++, in the style of Unity** (**Project → Create → C++ Script**): a class deriving from `MenhirEngine`,
+  with `OnLoad()`, `OnUpdate(MenhirTick dt)`... ([below](#c-scripts)).
+- **The simple C syntax** (**Project → Create → C Script**): one file is one script, named after the file;
+  its variables go in `MH_VARS`, and each callback is written like a function, `MH_START() { ... }`.
+- **The classic C syntax**: a struct, its functions and `MH_SCRIPT(...)` to declare them. Several scripts can
+  share a file. The simple syntax is made of macros over the classic API, and the C++ one is classes over it:
+  all three share the same engine, runtime, physics and audio, and can be mixed in a project.
 
 Everything comes from `menhir.h` and `menhir_simple.h` ([Engine/Scripting/include](../Engine/Scripting/include)).
 The compiler includes `menhir.h` before every script by itself, so no `#include` line is needed.
@@ -52,6 +55,103 @@ Both use the C compiler of **Project Settings → Build** (GCC or Clang) with th
 computes exactly the same thing in both. The editor's tests check it: `PlayerScriptTests` runs the same
 scripts in Play mode and in the built game with the same input, and compares the log word for word and
 every entity's transform (physics, tweens, timers and coroutines included).
+
+## C++ scripts
+
+```cpp
+class Player : public MenhirEngine {
+public:
+    float speed = 90;               // MH_RANGE(0, 360) Degrees per second
+    MenhirPos jump { 0, 5, 0 };
+    MenhirStyle style = MenhirStyle::EaseOut;
+
+    void OnLoad() {
+        Rotate(style, MenhirAngles { 0, 90, 0 }, 1.0f).OnComplete([this] { Log("%s turned", Name()); });
+        Every(1.0f, [this] { coins++; });
+        StartCoroutine(Intro());
+    }
+
+    void OnUpdate(MenhirTick dt) {
+        if (KeyDown("space"))
+            AddImpulse(jump);
+        Find("Lamp").Spin({ 0, speed, 0 });
+    }
+
+    void OnCollisionEnter(MenhirOther other) {
+        if (!std::strcmp(other.Name(), "Coin")) {
+            other.Destroy();
+            PlaySound("Sounds/coin.wav");
+        }
+    }
+
+    MenhirCoroutine Intro() {
+        Log("3...");
+        co_await Wait(1);
+        co_await Until([] { return KeyDown("space"); });
+        Find("Enemy").Spawn(MenhirPos { 0, 0, 10 });
+    }
+
+private:
+    int coins = 0;                  // private: the script's own, not a field
+};
+```
+
+Every class of a `.cpp` file deriving from `MenhirEngine` is a script, named after the class. The script
+**is** the object it is on: `Move(...)`, `Position()`, `Name()`, `Destroy()` act on it (`Object()` gives it as
+a `MenhirObject`). Its **public** variables of these types are fields (the inspector shows them, scenes save
+them), with their default from their initializer: `int`, `float`, `bool`, `MenhirVec2`, `MenhirPos` /
+`MenhirVec3` / `MenhirAngles` / `MenhirScale`, `MenhirColor`, `MenhirText` (a `const char *` the engine owns),
+`MenhirStyle` (a drop-down). The comment after one gives `MH_RANGE(min, max)`, `MH_HIDE` and its tooltip.
+Other members are the script's own (constructed as written: `std::vector`, `std::string`... all work).
+
+**Callbacks**, all optional: `OnAwake()`, `OnLoad()` (or `OnStart()`), `OnUpdate(MenhirTick dt)`,
+`OnLateUpdate(MenhirTick dt)`, `OnFixedUpdate(MenhirTick dt)`, `OnDestroy()`, `OnGameClose(MenhirTick time)`,
+`OnCollisionEnter(MenhirOther other)` / `OnCollisionExit`, `OnTriggerEnter(MenhirOther other)` / `OnTriggerExit`,
+`OnMessage(const char *name, MenhirAny value)` (from `obj.Send("Hit", 10)`). The ones taking a time can also
+be written without it (`void OnUpdate()`). An exception thrown in a callback is logged, not fatal.
+
+**Types**
+
+| | |
+|-|-|
+| `MenhirObject` | An object of the scene, a handle (copies are the same object); `MenhirObject()` or a destroyed one is not valid (`if (obj)`, `obj.IsValid()`) |
+| `MenhirReference` | A pointer to an object variable: `MenhirReference r = &player; r->Move(...)` |
+| `MenhirOther` | The other object of a collision or a trigger (a `MenhirObject`) |
+| `MenhirComponent` | A component of an object: `obj.Component("Rigidbody")`, `.Name()`, `.As<T>()` |
+| `MenhirAny` | An int, float, bool, vector, text or object: `MenhirAny v = 10; v.Int()`, `v.IsText()` |
+| `MenhirPos` (`MenhirVec3`, `MenhirAngles`, `MenhirScale`), `MenhirVec2`, `MenhirColor` | With `+ - * /`, `Dot`, `Cross`, `Length`, `Normalized`, `Distance`, `Lerp`, `MenhirVec3::Up()`, `Zero()`, `Forward()`... |
+| `MenhirStyle` | `Linear`, `EaseIn`, `EaseOut`, `EaseInOut`, `BackIn`, `BackOut`, `Elastic`, `Bounce` |
+| `MenhirTick` | Seconds (a float) |
+| `MenhirTween`, `MenhirTimer`, `MenhirCoroutine`, `MenhirHit` | Below |
+
+**MenhirObject** (and so the script itself)
+
+| | |
+|-|-|
+| Transform | `Position()` / `SetPosition(p)` (world), `LocalPosition()` / `SetLocalPosition`, `Rotation()` / `SetRotation(degrees)`, `LocalRotation` / `SetLocalRotation`, `Scale()` / `SetScale`, `Translate(by, world = false)`, `Turn(degrees, world = false)`, `LookAt(point or object)`, `Forward()`, `Right()`, `Up()`, `Distance(other)` |
+| Over time | `Move(style, by, seconds = 1)`, `MoveTo(style, position, seconds)`, `Rotate(style, degrees, seconds)` (360 is a full turn), `RotateTo`, `ScaleBy(style, factor, seconds)`, `ScaleTo`, each giving a `MenhirTween`: `.Delay(s)`, `.Loop(count, yoyo)` (-1 forever), `.OnComplete([this] { ... })`, `.Stop()`, `.Running()`; `Spin(degrees per second)` every frame, `StopTweens()`, `IsTweening()` |
+| Hierarchy, life | `Parent()`, `SetParent(obj)`, `ChildCount()`, `Child(i)`, `Children()`, `FindChild("Lid")`, `Active()`, `ActiveSelf()`, `SetActive(bool)`, `Destroy()` (end of the frame), `Clone()`, `Spawn(position)` |
+| Components | `Component("Name")`, `Components()`, `Has("Rigidbody")`, `Get<Enemy>()` (its script of that class, or nullptr), `Send("message", value)` |
+| Physics, audio | `AddForce`, `AddImpulse`, `Velocity()`, `SetVelocity`, `IsTouching(other)`; `Play()`, `StopSound()`, `PauseSound()`, `IsPlaying()`, `SetVolume`, `SetPitch` (its AudioSource) |
+| Other | `Name()`, `Id()`, `IsValid()`, `==` |
+
+**MenhirEngine** (inside a script)
+
+| | |
+|-|-|
+| Objects | `Find("Lamp")` (no object when there is none), `MainCamera()`, `Spawn(original, position)`, `Destroy(obj)` |
+| Time | `DeltaTime()`, `FixedDeltaTime()`, `Time()`, `Frame()` |
+| Timers | `After(seconds, [this] { ... })`, `Every(seconds, [this] { ... })` (0: every frame), giving a `MenhirTimer` (`.Cancel()`); they stop with the script |
+| Coroutines | A method returning `MenhirCoroutine`, started with `StartCoroutine(Intro())`: `co_await Wait(seconds)`, `co_await NextFrame()`, `co_await Until([] { return ...; })`; its local variables keep their values; `StopCoroutines()` |
+| Input | `Key`, `KeyDown`, `KeyUp` (`"space"`, `"a"`, `"mouse 0"`...), `Button`, `ButtonDown`, `ButtonUp`, `Axis`, `AxisRaw`, `Mouse()` |
+| Physics | `Raycast(origin, direction, distance, hit)` (a `MenhirHit`: `object`, `point`, `normal`, `distance`), `Gravity()`, `SetGravity` |
+| Audio | `PlaySound("Sounds/coin.wav", volume = 1)`, `PlaySoundAt(clip, position)`, `SetMasterVolume` |
+| The game | `Log`, `Warn`, `Error` (printf-style), `Random(min, max)`, `RandomInt(min, max)`, `RandomSeed`, `LoadScene("Level2", additive = false)`, `Quit()` |
+
+The C API (`mh_...`) is there too. The scripts are compiled as C++20 with the C++ compiler that goes with
+the C one of **Project Settings → Build** (`g++` for `gcc`, `clang++` for `clang`); on Windows the C++
+library goes inside the game. The generated copy (`Cache/Scripts/Generated/<file>.gen.cpp`) includes the file
+and adds the fields and `MENHIR_REGISTER(Class, fields, count)` for each class.
 
 ## The simple syntax
 
@@ -232,10 +332,11 @@ is all yours (`<string.h>`, `<stdlib.h>`, `<math.h>`…).
 |-|-|
 | `Engine/Scripting/include/menhir.h` | What scripts use: the declarations, math (inline), the API's functions |
 | `Engine/Scripting/include/menhir_simple.h` | The simple syntax's macros |
+| `Engine/Scripting/include/menhir.hpp` | The C++ API: `MenhirEngine`, `MenhirObject`, the values, tweens, timers, coroutines, registration |
 | `Engine/Scripting/include/menhir_abi.h` | What the engine and the scripts share: `mh_api` (the engine's functions, as a table), `mh_field`, `mh_script_type` |
 | `Engine/Scripting/src/` | The runtime, compiled with the scripts: `menhir_script.c` (registry, `mh_bind`, transforms, log, random), `menhir_runtime.c` (objects, tweens, timers, coroutines), `menhir_physics.c` (colliders, rigidbodies), `menhir_audio.c` (AudioSource, sounds, with miniaudio, compiled once into the user's cache from `menhir_miniaudio.c`) |
 | `Engine/Player/src/mh_scripts.c` | The game's `mh_api` and the scripts' life cycle |
-| `Editor/Menhir.Editor.Core/Scripting/` | `ScriptTransform` (the simple syntax's generated copy), `ScriptCompiler` (the library), `ScriptLibrary` (loading it, reading the script types), `ScriptHost` (the editor's `mh_api`, forwarding to `Runtime/PlaySession.cs`), `ScriptFields` (values) |
+| `Editor/Menhir.Editor.Core/Scripting/` | `ScriptTransform` (the simple syntax's generated copy), `CppScriptTransform` (the C++ one), `ScriptCompiler` (the library), `ScriptLibrary` (loading it, reading the script types), `ScriptHost` (the editor's `mh_api`, forwarding to `Runtime/PlaySession.cs`), `ScriptFields` (values) |
 
 Scenes save a script's values as JSON (`ScriptComponent`); the data file keeps them that way
 ([BinChunk.md](BinChunk.md)) and the game converts them to the fields' types like Play mode does.

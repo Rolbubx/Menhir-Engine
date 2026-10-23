@@ -28,16 +28,37 @@ public static class ScriptTemplate
 
         """;
 
+    /// <summary>Project > Create > C++ Script: a class deriving from MenhirEngine (menhir.hpp), named after its file.</summary>
+    public static string CppContent(string name) => $$"""
+        class {{name}} : public MenhirEngine {
+        public:
+            // Public variables are fields: the inspector shows them (MH_RANGE(min, max), MH_HIDE and a
+            // tooltip go in a comment after them).
+            float speed = 1;    // MH_RANGE(0, 10) Meters per second
+
+            // Before the first update.
+            void OnLoad() {
+            }
+
+            // Every frame.
+            void OnUpdate(MenhirTick dt) {
+            }
+        };
+
+        """;
+
     /// <summary>Creates NewScript.c (NewScript1.c, ... when taken) in a folder. Returns its asset path.</summary>
-    public static string Create(AssetDatabase assets, string folder)
+    public static string Create(AssetDatabase assets, string folder, bool cpp = false)
     {
+        string extension = cpp ? ".cpp" : ".c";
         if (!assets.IsFolder(folder))
             throw new ArgumentException($"'{folder}' is not a folder.");
         string name = DefaultName;
-        for (int i = 1; File.Exists(assets.ToAbsolutePath(AssetPaths.Combine(folder, name + ".c"))); i++)
+        for (int i = 1; File.Exists(assets.ToAbsolutePath(AssetPaths.Combine(folder, name + ".c"))) ||
+                        File.Exists(assets.ToAbsolutePath(AssetPaths.Combine(folder, name + ".cpp"))); i++)
             name = DefaultName + i;
-        string path = AssetPaths.Combine(folder, name + ".c");
-        File.WriteAllText(assets.ToAbsolutePath(path), Content(name));
+        string path = AssetPaths.Combine(folder, name + extension);
+        File.WriteAllText(assets.ToAbsolutePath(path), cpp ? CppContent(name) : Content(name));
         assets.Refresh();
         return path;
     }
@@ -50,10 +71,11 @@ public static class ScriptTemplate
     {
         string oldName = Path.GetFileNameWithoutExtension(oldFileName);
         string newName = Path.GetFileNameWithoutExtension(newFileName);
-        if (!newFileName.EndsWith(".c", StringComparison.OrdinalIgnoreCase) || !File.Exists(absolutePath) ||
-            !IsIdentifier(newName) || File.ReadAllText(absolutePath) != Content(oldName))
+        bool cpp = newFileName.EndsWith(".cpp", StringComparison.OrdinalIgnoreCase);
+        if (!(cpp || newFileName.EndsWith(".c", StringComparison.OrdinalIgnoreCase)) || !File.Exists(absolutePath) ||
+            !IsIdentifier(newName) || File.ReadAllText(absolutePath) != (cpp ? CppContent(oldName) : Content(oldName)))
             return false;
-        File.WriteAllText(absolutePath, Content(newName));
+        File.WriteAllText(absolutePath, cpp ? CppContent(newName) : Content(newName));
         return true;
     }
 

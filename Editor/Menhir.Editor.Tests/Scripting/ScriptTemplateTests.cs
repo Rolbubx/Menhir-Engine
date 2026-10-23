@@ -31,6 +31,20 @@ public sealed class ScriptTemplateTests : IDisposable
     }
 
     [Fact]
+    public void CppScripts_AreAClassNamedAfterTheirFile()
+    {
+        string path = ScriptTemplate.Create(_project.Assets, AssetPaths.Root, cpp: true);
+        Assert.Equal("Assets/NewScript.cpp", path);
+        Assert.Contains("class NewScript : public MenhirEngine", File.ReadAllText(_project.Assets.ToAbsolutePath(path)));
+        Assert.Equal(AssetImporters.Script, _project.Assets.FindByPath(path)!.Meta.Importer);
+        Assert.Equal("Assets/NewScript1.c", ScriptTemplate.Create(_project.Assets, AssetPaths.Root)); // the name is taken
+
+        string renamed = _project.Assets.Rename(path, "Enemy.cpp");
+        Assert.True(ScriptTemplate.RenameClass(_project.Assets.ToAbsolutePath(renamed), "NewScript.cpp", "Enemy.cpp"));
+        Assert.Contains("class Enemy : public MenhirEngine", File.ReadAllText(_project.Assets.ToAbsolutePath(renamed)));
+    }
+
+    [Fact]
     public void RenameClass_FollowsTheFileOnlyForAnUntouchedTemplate()
     {
         string path = _project.Assets.Rename(ScriptTemplate.Create(_project.Assets, AssetPaths.Root), "Player.c");

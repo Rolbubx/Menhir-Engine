@@ -410,6 +410,19 @@ public sealed class ProjectPanel : EditorPanel
                 }
             };
         }
+        if (ImGui.MenuItem($"{Icons.Script}  C++ Script"))
+        {
+            string parent = _currentFolder;
+            _pendingChange = () =>
+            {
+                string path = ScriptTemplate.Create(Assets!, parent, cpp: true);
+                if (Assets!.FindByPath(path) is { } created)
+                {
+                    _context.SelectedAssetGuid = created.Guid;
+                    BeginRename(created);
+                }
+            };
+        }
         if (ImGui.MenuItem($"{Icons.Script}  C Script"))
         {
             string parent = _currentFolder;

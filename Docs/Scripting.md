@@ -74,7 +74,8 @@ public:
     void OnUpdate(MenhirTick dt) {
         if (KeyDown("space"))
             AddImpulse(jump);
-        Find("Lamp").Spin({ 0, speed, 0 });
+        MenhirObject lamp = MenhirScene.Lamp;   // the object named "Lamp"
+        lamp.Spin({ 0, speed, 0 });
     }
 
     void OnCollisionEnter(MenhirOther other) {
@@ -139,7 +140,7 @@ be written without it (`void OnUpdate()`). An exception thrown in a callback is 
 
 | | |
 |-|-|
-| Objects | `Find("Lamp")` (no object when there is none), `MainCamera()`, `Spawn(original, position)`, `Destroy(obj)` |
+| Objects | `MenhirScene.Lamp` (the object named Lamp; `MenhirScene.Main_Camera` finds "Main Camera"), `MenhirScene["Main Camera"]`, `Find("Lamp")` (no object when there is none), `MainCamera()`, `Spawn(original, position)`, `Destroy(obj)` |
 | Time | `DeltaTime()`, `FixedDeltaTime()`, `Time()`, `Frame()` |
 | Timers | `After(seconds, [this] { ... })`, `Every(seconds, [this] { ... })` (0: every frame), giving a `MenhirTimer` (`.Cancel()`); they stop with the script |
 | Coroutines | A method returning `MenhirCoroutine`, started with `StartCoroutine(Intro())`: `co_await Wait(seconds)`, `co_await NextFrame()`, `co_await Until([] { return ...; })`; its local variables keep their values; `StopCoroutines()` |

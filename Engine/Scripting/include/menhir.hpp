@@ -23,6 +23,7 @@
    all optional: OnAwake(), OnLoad() (or OnStart()), OnUpdate(MenhirTick dt), OnLateUpdate(MenhirTick dt),
    OnFixedUpdate(MenhirTick dt), OnDestroy(), OnGameClose(MenhirTick time), OnCollisionEnter(MenhirOther),
    OnCollisionExit, OnTriggerEnter, OnTriggerExit, OnMessage(const char *name, MenhirAny value).
+   MenhirScene.Tiki (or MenhirScene["Tiki"]) is the object of the scene named Tiki: MenhirObject g = MenhirScene.Tiki;
    The engine is C: this header wraps menhir.h, and its runtime (tweens, physics, audio) is shared. */
 #ifndef MENHIR_HPP
 #define MENHIR_HPP
@@ -420,6 +421,16 @@ protected:
 using MenhirOther = MenhirObject;
 /* A pointer to an object variable: MenhirReference r = &player; r->Move(...). */
 using MenhirReference = MenhirObject *;
+
+extern "C" mh_entity mh__scene_object(const char *identifier, mh_entity *cache);
+
+/* The objects of the loaded scenes: MenhirScene.Tiki is the object named Tiki (MenhirScene.Main_Camera finds
+   "Main Camera"), MenhirScene["Main Camera"] any name; no object (not valid) when there is none. The editor's
+   generated copy of a script lists the MenhirScene.Name it uses (MenhirSceneObjects). */
+struct MenhirSceneBase {
+    MenhirObject operator[](const char *name) const { return MenhirObject(mh_find(name)); }
+};
+#define MenhirScene (MenhirSceneBase{})
 
 inline MenhirAny::MenhirAny(const MenhirObject &v) : _kind(Kind::Object), _object(v.Id()) {}
 inline MenhirObject MenhirAny::Object() const { return MenhirObject(_object); }

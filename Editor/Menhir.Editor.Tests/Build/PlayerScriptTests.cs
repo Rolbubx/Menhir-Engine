@@ -422,6 +422,10 @@ public sealed class PlayerScriptTests : IDisposable
                 MenhirObject lamp = Find("Lamp");
                 MenhirReference ref = &lamp;
                 Log("lamp %s valid %d children %d", ref->Name(), (int)ref->IsValid(), lamp.ChildCount());
+                MenhirObject g = MenhirScene.Zone;
+                g.Move(MenhirStyle::Linear, MenhirPos { 0, 0, 1 }, 0.2f);
+                Log("scene: %s, %s, %s, missing %d", g.Name(), MenhirScene.Old_Crate.Name(), MenhirScene["Lamp"].Name(),
+                    (int)(bool)MenhirScene.Nothing_Here);
             }
 
             MenhirCoroutine Sequence() {
@@ -497,6 +501,7 @@ public sealed class PlayerScriptTests : IDisposable
         string Show(List<string> lines) => string.Join("\n", lines);
         Assert.Contains("log 0 load Player hero speed 90 lives 5 style 2 jump 0 5 0 tint 1.00 hidden 7", native);
         Assert.Contains("log 0 lamp Lamp valid 1 children 0", native);
+        Assert.Contains("log 0 scene: Zone, Old Crate, Lamp, missing 0", native);
         Assert.Contains("log 0 sequence waited, ticks 2, local 42", native);
         Assert.Contains(native, l => l.StartsWith("log 0 turned to 90.0 on frame", StringComparison.Ordinal));
         Assert.Contains("log 0 spawned Crate with 1 child, lid Lid", native);
